@@ -9,33 +9,46 @@ using System.Threading.Tasks;
 using OllamaSharp;
 using OllamaSharp.Models;
 using Lexmancer.Abilities.V2;
+using Lexmancer.Abilities.LLM;
+using Lexmancer.Config;
 
 /// <summary>
-/// V2 LLM Client with creative prompting for effect scripts
+/// V2 LLM Client with creative prompting for effect scripts.
+/// Supports both LLamaSharp direct inference and OllamaSharp HTTP fallback.
 /// </summary>
 public class LLMClientV2
 {
     private readonly OllamaApiClient ollama;
     private readonly string baseUrl;
     private readonly string model;
+    private readonly bool _useDirect;
 
     public LLMClientV2(string baseUrl = "http://localhost:11434", string model = "qwen2.5:7b")
     {
         this.baseUrl = baseUrl;
         this.model = model;
 
-        // Create custom HttpClient with infinite timeout for LLM calls
-        var httpClient = new System.Net.Http.HttpClient
+        // Check if LLamaSharp direct inference is available
+        _useDirect = GameConfig.UseLLamaSharpDirect && ModelManager.Instance?.IsLoaded == true;
+
+        if (_useDirect)
         {
-            Timeout = System.Threading.Timeout.InfiniteTimeSpan,
-            BaseAddress = new Uri(baseUrl)
-        };
+            GD.Print("LLMClientV2 initialized with LLamaSharp direct inference");
+        }
+        else
+        {
+            // Fall back to OllamaSharp HTTP client
+            var httpClient = new System.Net.Http.HttpClient
+            {
+                Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+                BaseAddress = new Uri(baseUrl)
+            };
 
-        // OllamaApiClient constructor with just HttpClient
-        this.ollama = new OllamaApiClient(httpClient);
-        this.ollama.SelectedModel = model;
+            this.ollama = new OllamaApiClient(httpClient);
+            this.ollama.SelectedModel = model;
 
-        GD.Print("LLMClientV2 initialized with infinite timeout");
+            GD.Print("LLMClientV2 initialized with OllamaSharp HTTP fallback");
+        }
     }
 
     /// <summary>
@@ -45,44 +58,65 @@ public class LLMClientV2
     {
         try
         {
-            var prompt = BuildCreativePrompt(primitives);
-
-            GD.Print($"Sending request to LLM: {baseUrl} (model: {model})");
-            GD.Print($"Primitives: {string.Join(" + ", primitives)}");
-
-            // Create request with JSON format
-            var request = new GenerateRequest
-            {
-                Prompt = prompt,
-                Format = "json",
-                Stream = false,
-                Model = model
-            };
-
-            // Generate response
-            var responseBuilder = new StringBuilder();
-            await foreach (var chunk in ollama.Generate(request))
-            {
-                if (chunk?.Response != null)
-                {
-                    responseBuilder.Append(chunk.Response);
-                }
-            }
-
-            var jsonResponse = responseBuilder.ToString();
-            GD.Print($"Received response from LLM ({jsonResponse.Length} chars)");
-
-            // Parse using AbilityBuilder
-            var ability = AbilityBuilder.FromLLMResponse(jsonResponse);
-
-            GD.Print("✓ Generated ability");
-            return ability;
+            if (_useDirect)
+                return await GenerateAbilityDirectAsync(primitives);
+            else
+                return await GenerateAbilityHttpAsync(primitives);
         }
         catch (Exception ex)
         {
             GD.PrintErr($"LLM request failed: {ex.Message}");
             return CreateFallbackAbility(primitives);
         }
+    }
+
+    private async Task<AbilityV2> GenerateAbilityDirectAsync(string[] primitives)
+    {
+        var prompt = BuildCreativePrompt(primitives);
+
+        GD.Print($"Generating ability via LLamaSharp direct inference");
+        GD.Print($"Primitives: {string.Join(" + ", primitives)}");
+
+        // Use JSON grammar constraint for guaranteed valid JSON
+        var jsonResponse = await ModelManager.Instance.InferAsync(prompt, enforceJson: true);
+
+        GD.Print($"Received response from LLamaSharp ({jsonResponse.Length} chars)");
+
+        var ability = AbilityBuilder.FromLLMResponse(jsonResponse);
+        GD.Print("✓ Generated ability via direct inference");
+        return ability;
+    }
+
+    private async Task<AbilityV2> GenerateAbilityHttpAsync(string[] primitives)
+    {
+        var prompt = BuildCreativePrompt(primitives);
+
+        GD.Print($"Sending request to LLM: {baseUrl} (model: {model})");
+        GD.Print($"Primitives: {string.Join(" + ", primitives)}");
+
+        var request = new GenerateRequest
+        {
+            Prompt = prompt,
+            Format = "json",
+            Stream = false,
+            Model = model
+        };
+
+        var responseBuilder = new StringBuilder();
+        await foreach (var chunk in ollama.Generate(request))
+        {
+            if (chunk?.Response != null)
+            {
+                responseBuilder.Append(chunk.Response);
+            }
+        }
+
+        var jsonResponse = responseBuilder.ToString();
+        GD.Print($"Received response from LLM ({jsonResponse.Length} chars)");
+
+        var ability = AbilityBuilder.FromLLMResponse(jsonResponse);
+        GD.Print("Generated ability via HTTP");
+        return ability;
     }
 
     private string BuildCreativePrompt(string[] primitives)
@@ -317,75 +351,108 @@ Be CREATIVE! Combine actions in unique ways!";
         string element1Description = null,
         string element2Description = null)
     {
+        string jsonResponse = null;
         try
         {
             var prompt = BuildElementCreationPrompt(element1Name, element2Name, element1Description, element2Description);
 
-            GD.Print($"Sending element creation request to LLM: {element1Name} + {element2Name}");
-
-            // Create request with JSON format
-            var request = new GenerateRequest
+            if (_useDirect)
             {
-                Prompt = prompt,
-                Format = "json",
-                Stream = false,
-                Model = model
-            };
-
-            // Generate response
-            var responseBuilder = new StringBuilder();
-            await foreach (var chunk in ollama.Generate(request))
+                GD.Print($"Generating element via LLamaSharp: {element1Name} + {element2Name}");
+                // Use JSON grammar constraint for guaranteed valid JSON
+                jsonResponse = await ModelManager.Instance.InferAsync(prompt, enforceJson: true);
+            }
+            else
             {
-                if (chunk?.Response != null)
+                GD.Print($"Sending element creation request to LLM: {element1Name} + {element2Name}");
+
+                var request = new GenerateRequest
                 {
-                    responseBuilder.Append(chunk.Response);
+                    Prompt = prompt,
+                    Format = "json",
+                    Stream = false,
+                    Model = model
+                };
+
+                var responseBuilder = new StringBuilder();
+                await foreach (var chunk in ollama.Generate(request))
+                {
+                    if (chunk?.Response != null)
+                    {
+                        responseBuilder.Append(chunk.Response);
+                    }
                 }
+                jsonResponse = responseBuilder.ToString();
             }
 
-            var jsonResponse = responseBuilder.ToString();
-            GD.Print($"Received element response from LLM ({jsonResponse.Length} chars)");
+            GD.Print($"Received element response ({jsonResponse.Length} chars)");
 
-            // Parse JSON response
+            // Clean up JSON response (remove any trailing text after closing brace)
+            int lastBrace = jsonResponse.LastIndexOf('}');
+            if (lastBrace > 0 && lastBrace < jsonResponse.Length - 1)
+            {
+                jsonResponse = jsonResponse.Substring(0, lastBrace + 1);
+            }
+
+            // Parse JSON response - try direct deserialization first (LLamaSharp often returns complete objects)
             var options = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             };
 
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonResponse, options);
-
-            // Extract element info
-            string name = parsed["name"].GetString();
-            string description = parsed["description"].GetString();
-            string colorHex = parsed.ContainsKey("color") ? parsed["color"].GetString() : "#808080";
-
-            // Parse ability from the effects section
-            AbilityV2 ability;
-            if (parsed.ContainsKey("ability"))
+            // Check if response has Id/Name (ElementGenerationResponse format)
+            var testParsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonResponse, options);
+            if (testParsed.ContainsKey("Id") || testParsed.ContainsKey("id"))
             {
-                var abilityJson = parsed["ability"].GetRawText();
-                ability = AbilityBuilder.FromLLMResponse(abilityJson);
+                // LLM returned complete ElementGenerationResponse - parse the ability separately
+                string id = (testParsed.ContainsKey("Id") ? testParsed["Id"] : testParsed["id"]).GetString();
+                string name = (testParsed.ContainsKey("Name") ? testParsed["Name"] : testParsed["name"]).GetString();
+                string description = (testParsed.ContainsKey("Description") ? testParsed["Description"] : testParsed["description"]).GetString();
+                string colorHex = testParsed.ContainsKey("ColorHex") ? testParsed["ColorHex"].GetString()
+                    : (testParsed.ContainsKey("colorHex") ? testParsed["colorHex"].GetString() : "#808080");
+
+                var abilityKey = testParsed.ContainsKey("Ability") ? "Ability" : "ability";
+                var abilityJson = testParsed[abilityKey].GetRawText();
+                var ability = AbilityBuilder.FromLLMResponse(abilityJson);
+
+                GD.Print($"Generated element: {name}");
+                return new ElementGenerationResponse { Id = id, Name = name, Description = description, ColorHex = colorHex, Ability = ability };
+            }
+
+            // Otherwise parse old format (name/description/color/ability)
+            string elemName = testParsed["name"].GetString();
+            string elemDescription = testParsed["description"].GetString();
+            string elemColorHex = testParsed.ContainsKey("color") ? testParsed["color"].GetString() : "#808080";
+
+            AbilityV2 elemAbility;
+            if (testParsed.ContainsKey("ability"))
+            {
+                var abilityJson = testParsed["ability"].GetRawText();
+                elemAbility = AbilityBuilder.FromLLMResponse(abilityJson);
             }
             else
             {
-                // Fallback: create basic ability
-                ability = CreateFallbackAbilityForElement(name);
+                elemAbility = CreateFallbackAbilityForElement(elemName);
             }
 
-            GD.Print($"✓ Generated element: {name}");
-
+            GD.Print($"Generated element: {elemName}");
             return new ElementGenerationResponse
             {
-                Id = name.ToLower().Replace(" ", "_"),
-                Name = name,
-                Description = description,
-                ColorHex = colorHex,
-                Ability = ability
+                Id = elemName.ToLower().Replace(" ", "_"),
+                Name = elemName,
+                Description = elemDescription,
+                ColorHex = elemColorHex,
+                Ability = elemAbility
             };
         }
         catch (Exception ex)
         {
             GD.PrintErr($"Element generation failed: {ex.Message}");
-            // Return fallback
+            if (jsonResponse != null && jsonResponse.Length > 0)
+            {
+                GD.PrintErr("LLM JSON Response:");
+                GD.PrintErr(jsonResponse.Length > 500 ? jsonResponse.Substring(0, 500) + "..." : jsonResponse);
+            }
             return new ElementGenerationResponse
             {
                 Id = $"{element1Name}_{element2Name}".ToLower(),

@@ -6,6 +6,7 @@ using Lexmancer.Systems;
 using Lexmancer.UI;
 using Lexmancer.Config;
 using Lexmancer.Combat;
+using Lexmancer.Abilities.LLM;
 
 public partial class Main : Node2D
 {
@@ -26,6 +27,55 @@ public partial class Main : Node2D
 		GameConfig.GenerateElementAbilitiesOnStartup = GenerateAbilitiesOnStartup;
 		GameConfig.PrintConfig();
 
+		// If using LLM with LLamaSharp direct inference, load model first
+		if (GameConfig.UseLLM && GameConfig.UseLLamaSharpDirect)
+		{
+			CallDeferred(nameof(InitializeModelAndContinue));
+		}
+		else
+		{
+			InitializeGameSystems();
+		}
+	}
+
+	/// <summary>
+	/// Load LLamaSharp model asynchronously, then continue with game initialization
+	/// </summary>
+	private async void InitializeModelAndContinue()
+	{
+		try
+		{
+			var modelManager = new ModelManager();
+			modelManager.Name = "ModelManager";
+			AddChild(modelManager);
+
+			GD.Print("Loading LLM model from bundled assets...");
+			bool success = await modelManager.InitializeAsync();
+
+			if (!success)
+			{
+				GD.PrintErr("Model loading failed, falling back to Ollama HTTP mode");
+				GameConfig.UseLLamaSharpDirect = false;
+			}
+			else
+			{
+				GD.Print("LLM model loaded successfully!");
+			}
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"Model initialization error: {ex.Message}");
+			GameConfig.UseLLamaSharpDirect = false;
+		}
+
+		InitializeGameSystems();
+	}
+
+	/// <summary>
+	/// Initialize element system, LLM generator, and game world
+	/// </summary>
+	private void InitializeGameSystems()
+	{
 		// Initialize element system
 		ElementRegistry.Initialize("player_001");
 
@@ -208,6 +258,7 @@ public partial class Main : Node2D
 	{
 		// Cleanup element system
 		ElementRegistry.Shutdown();
+		// ModelManager cleans up in its own _ExitTree
 		base._ExitTree();
 	}
 
