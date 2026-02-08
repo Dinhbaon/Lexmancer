@@ -1,0 +1,601 @@
+using Godot;
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Lexmancer.Elements;
+
+namespace Lexmancer.UI;
+
+/// <summary>
+/// Panel for combining elements (opened with TAB key)
+/// </summary>
+public partial class CombinationPanel : Control
+{
+	private PlayerElementInventory inventory;
+	private LLMElementGenerator llmGenerator;
+	private string selectedElement1;
+	private string selectedElement2;
+
+	// Tab container
+	private TabContainer tabContainer;
+
+	// Combination tab elements
+	private Label titleLabel;
+	private VBoxContainer elementList1;
+	private VBoxContainer elementList2;
+	private Button combineButton;
+	private Label resultLabel;
+	private Label llmOutputLabel;
+	private CheckBox useLLMCheckbox;
+
+	// Inventory tab elements
+	private VBoxContainer inventoryElementList;
+	private ScrollContainer inventoryScrollContainer;
+
+	private bool isOpen = false;
+	private bool useLLM = true; // Toggle for LLM generation
+
+	public override void _Ready()
+	{
+		// Position in center of screen (will be updated in CreateUI)
+		Visible = false;
+
+		// Allow processing while game is paused
+		ProcessMode = ProcessModeEnum.Always;
+
+		// Create UI
+		CreateUI();
+
+		// Wait for game manager
+		CallDeferred(nameof(Initialize));
+	}
+
+	private void Initialize()
+	{
+		// Get inventory from GameManager
+		var gameManager = GetNode<GameManager>("/root/Main/GameManager");
+		if (gameManager != null)
+		{
+			inventory = gameManager.Inventory;
+
+			// Subscribe to inventory changes
+			inventory.OnElementAdded += (id, count) => { if (isOpen) RefreshAll(); };
+			inventory.OnElementConsumed += (id, count) => { if (isOpen) RefreshAll(); };
+			inventory.OnElementCombined += (id) => { /* Handled in OnCombinePressed */ };
+			inventory.OnEquipmentChanged += () => { if (isOpen) RefreshInventoryList(); };
+		}
+
+		// Initialize LLM generator
+		try
+		{
+			llmGenerator = new LLMElementGenerator(
+				playerId: "player_001",
+				useLLM: true,
+				llmBaseUrl: "http://localhost:11434",
+				llmModel: "qwen2.5:7b"
+			);
+			GD.Print("LLM Generator initialized successfully");
+		}
+		catch (Exception ex)
+		{
+			GD.PrintErr($"Failed to initialize LLM Generator: {ex.Message}");
+			useLLM = false;
+		}
+	}
+
+	public override void _Input(InputEvent @event)
+	{
+		// Toggle panel with TAB
+		if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo && keyEvent.Keycode == Key.Tab)
+		{
+			TogglePanel();
+			GetViewport().SetInputAsHandled();
+		}
+	}
+
+	private void TogglePanel()
+	{
+		isOpen = !isOpen;
+		Visible = isOpen;
+
+		// Pause/unpause game
+		GetTree().Paused = isOpen;
+
+		if (isOpen)
+		{
+			RefreshAll();
+		}
+	}
+
+	private void CreateUI()
+	{
+		// Center the entire panel on screen
+		SetAnchorsPreset(LayoutPreset.Center);
+		CustomMinimumSize = new Vector2(600, 550);
+		// Center the control properly by offsetting by half its size
+		OffsetLeft = -300;
+		OffsetTop = -275;
+		OffsetRight = 300;
+		OffsetBottom = 275;
+		GrowHorizontal = GrowDirection.Both;
+		GrowVertical = GrowDirection.Both;
+
+		// Background
+		var bg = new ColorRect();
+		bg.Color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+		bg.SetAnchorsPreset(LayoutPreset.FullRect);
+		AddChild(bg);
+
+		// Main vertical layout container with margin
+		var marginContainer = new MarginContainer();
+		marginContainer.SetAnchorsPreset(LayoutPreset.FullRect);
+		marginContainer.AddThemeConstantOverride("margin_left", 10);
+		marginContainer.AddThemeConstantOverride("margin_right", 10);
+		marginContainer.AddThemeConstantOverride("margin_top", 10);
+		marginContainer.AddThemeConstantOverride("margin_bottom", 10);
+		AddChild(marginContainer);
+
+		var mainVBox = new VBoxContainer();
+		mainVBox.AddThemeConstantOverride("separation", 10);
+		marginContainer.AddChild(mainVBox);
+
+		// Title
+		titleLabel = new Label();
+		titleLabel.Text = "Element Manager";
+		titleLabel.AddThemeColorOverride("font_color", Colors.White);
+		titleLabel.AddThemeFontSizeOverride("font_size", 24);
+		titleLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		mainVBox.AddChild(titleLabel);
+
+		// Tab container
+		tabContainer = new TabContainer();
+		tabContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+		tabContainer.TabAlignment = TabBar.AlignmentMode.Center;
+		mainVBox.AddChild(tabContainer);
+
+		// Create tabs
+		CreateCombineTab();
+		CreateInventoryTab();
+	}
+
+	private void CreateCombineTab()
+	{
+		var combineTab = new VBoxContainer();
+		combineTab.Name = "Combine";
+		combineTab.AddThemeConstantOverride("separation", 10);
+		tabContainer.AddChild(combineTab);
+
+		// Top row: LLM checkbox
+		var topHBox = new HBoxContainer();
+		topHBox.AddThemeConstantOverride("separation", 20);
+		combineTab.AddChild(topHBox);
+
+		useLLMCheckbox = new CheckBox();
+		useLLMCheckbox.Text = "Use LLM Generation";
+		useLLMCheckbox.ButtonPressed = true;
+		useLLMCheckbox.AddThemeColorOverride("font_color", Colors.White);
+		useLLMCheckbox.Toggled += (bool enabled) => { useLLM = enabled; };
+		topHBox.AddChild(useLLMCheckbox);
+
+		// Element selection row
+		var selectionHBox = new HBoxContainer();
+		selectionHBox.AddThemeConstantOverride("separation", 20);
+		selectionHBox.SizeFlagsVertical = SizeFlags.ExpandFill;
+		combineTab.AddChild(selectionHBox);
+
+		// Element list 1 container
+		var list1VBox = new VBoxContainer();
+		list1VBox.AddThemeConstantOverride("separation", 5);
+		list1VBox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		selectionHBox.AddChild(list1VBox);
+
+		var label1 = new Label();
+		label1.Text = "Select Element 1:";
+		label1.AddThemeColorOverride("font_color", Colors.White);
+		list1VBox.AddChild(label1);
+
+		var scroll1 = new ScrollContainer();
+		scroll1.CustomMinimumSize = new Vector2(0, 150);
+		scroll1.SizeFlagsVertical = SizeFlags.ExpandFill;
+		list1VBox.AddChild(scroll1);
+
+		elementList1 = new VBoxContainer();
+		elementList1.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		scroll1.AddChild(elementList1);
+
+		// Element list 2 container
+		var list2VBox = new VBoxContainer();
+		list2VBox.AddThemeConstantOverride("separation", 5);
+		list2VBox.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		selectionHBox.AddChild(list2VBox);
+
+		var label2 = new Label();
+		label2.Text = "Select Element 2:";
+		label2.AddThemeColorOverride("font_color", Colors.White);
+		list2VBox.AddChild(label2);
+
+		var scroll2 = new ScrollContainer();
+		scroll2.CustomMinimumSize = new Vector2(0, 150);
+		scroll2.SizeFlagsVertical = SizeFlags.ExpandFill;
+		list2VBox.AddChild(scroll2);
+
+		elementList2 = new VBoxContainer();
+		elementList2.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		scroll2.AddChild(elementList2);
+
+		// Combine button (centered)
+		var buttonContainer = new CenterContainer();
+		combineTab.AddChild(buttonContainer);
+
+		combineButton = new Button();
+		combineButton.Text = "Combine!";
+		combineButton.CustomMinimumSize = new Vector2(150, 40);
+		combineButton.Pressed += OnCombinePressed;
+		buttonContainer.AddChild(combineButton);
+
+		// Result label
+		resultLabel = new Label();
+		resultLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+		resultLabel.AddThemeFontSizeOverride("font_size", 16);
+		combineTab.AddChild(resultLabel);
+
+		// LLM output section with background
+		var llmOutputContainer = new PanelContainer();
+		llmOutputContainer.CustomMinimumSize = new Vector2(0, 100);
+		llmOutputContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+		combineTab.AddChild(llmOutputContainer);
+
+		var outputStyle = new StyleBoxFlat();
+		outputStyle.BgColor = new Color(0.05f, 0.05f, 0.05f, 0.8f);
+		llmOutputContainer.AddThemeStyleboxOverride("panel", outputStyle);
+
+		var outputMargin = new MarginContainer();
+		outputMargin.AddThemeConstantOverride("margin_left", 5);
+		outputMargin.AddThemeConstantOverride("margin_right", 5);
+		outputMargin.AddThemeConstantOverride("margin_top", 5);
+		outputMargin.AddThemeConstantOverride("margin_bottom", 5);
+		llmOutputContainer.AddChild(outputMargin);
+
+		llmOutputLabel = new Label();
+		llmOutputLabel.Text = "LLM Output will appear here...";
+		llmOutputLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+		llmOutputLabel.AutowrapMode = TextServer.AutowrapMode.Word;
+		llmOutputLabel.SizeFlagsVertical = SizeFlags.ExpandFill;
+		llmOutputLabel.VerticalAlignment = VerticalAlignment.Top;
+		outputMargin.AddChild(llmOutputLabel);
+	}
+
+	private void CreateInventoryTab()
+	{
+		var inventoryTab = new VBoxContainer();
+		inventoryTab.Name = "Inventory";
+		inventoryTab.AddThemeConstantOverride("separation", 10);
+		tabContainer.AddChild(inventoryTab);
+
+		// Instructions
+		var instructionLabel = new Label();
+		instructionLabel.Text = "Click to equip/unequip elements (max 3 equipped)";
+		instructionLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		instructionLabel.AddThemeColorOverride("font_color", Colors.White);
+		instructionLabel.AddThemeFontSizeOverride("font_size", 14);
+		inventoryTab.AddChild(instructionLabel);
+
+		// Scroll container for element list
+		inventoryScrollContainer = new ScrollContainer();
+		inventoryScrollContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+		inventoryScrollContainer.CustomMinimumSize = new Vector2(0, 400);
+		inventoryTab.AddChild(inventoryScrollContainer);
+
+		// Element list
+		inventoryElementList = new VBoxContainer();
+		inventoryElementList.AddThemeConstantOverride("separation", 5);
+		inventoryScrollContainer.AddChild(inventoryElementList);
+	}
+
+	private void RefreshAll()
+	{
+		RefreshCombineElementLists();
+		RefreshInventoryList();
+	}
+
+	private void RefreshCombineElementLists()
+	{
+		// Clear lists
+		foreach (Node child in elementList1.GetChildren())
+			child.QueueFree();
+		foreach (Node child in elementList2.GetChildren())
+			child.QueueFree();
+
+		// Get elements
+		var elements = inventory.GetAll();
+
+		// Populate both lists
+		foreach (var (elementId, count) in elements)
+		{
+			// Get element data
+			Element element = ElementRegistry.GetElement(elementId)
+				?? ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
+
+			// Add to first list
+			var button1 = CreateElementButton(elementId, element, count, 1);
+			elementList1.AddChild(button1);
+
+			// Add to second list
+			var button2 = CreateElementButton(elementId, element, count, 2);
+			elementList2.AddChild(button2);
+		}
+
+		resultLabel.Text = "";
+	}
+
+	private void RefreshInventoryList()
+	{
+		// Clear existing elements
+		foreach (Node child in inventoryElementList.GetChildren())
+		{
+			child.QueueFree();
+		}
+
+		// Get all elements
+		var elements = inventory.GetAll();
+		if (elements.Count == 0)
+		{
+			var emptyLabel = new Label();
+			emptyLabel.Text = "(No elements in inventory)";
+			emptyLabel.HorizontalAlignment = HorizontalAlignment.Center;
+			emptyLabel.AddThemeColorOverride("font_color", Colors.Gray);
+			inventoryElementList.AddChild(emptyLabel);
+			return;
+		}
+
+		// Create row for each element
+		foreach (var (elementId, count) in elements)
+		{
+			var row = CreateInventoryElementRow(elementId, count);
+			inventoryElementList.AddChild(row);
+		}
+	}
+
+	private HBoxContainer CreateInventoryElementRow(string elementId, int count)
+	{
+		// Get element data
+		Element element = ElementRegistry.GetElement(elementId);
+		if (element == null)
+		{
+			element = ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
+		}
+
+		var row = new HBoxContainer();
+		row.AddThemeConstantOverride("separation", 10);
+
+		// Color indicator
+		var colorRect = new ColorRect();
+		colorRect.CustomMinimumSize = new Vector2(20, 40);
+		colorRect.Color = element?.Color ?? Colors.Gray;
+		row.AddChild(colorRect);
+
+		// Element name and count
+		var nameLabel = new Label();
+		nameLabel.Text = $"{element?.Name ?? elementId} x{count}";
+		nameLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		nameLabel.VerticalAlignment = VerticalAlignment.Center;
+		nameLabel.AddThemeColorOverride("font_color", Colors.White);
+		row.AddChild(nameLabel);
+
+		// Equip/Unequip button
+		var equipButton = new Button();
+		equipButton.CustomMinimumSize = new Vector2(100, 40);
+
+		bool isEquipped = inventory.IsEquipped(elementId);
+		equipButton.Text = isEquipped ? "Unequip" : "Equip";
+
+		// Style button based on equipped state
+		var normalStyle = new StyleBoxFlat();
+		var hoverStyle = new StyleBoxFlat();
+		var pressedStyle = new StyleBoxFlat();
+
+		if (isEquipped)
+		{
+			normalStyle.BgColor = new Color(0.3f, 0.7f, 0.3f); // Green
+			hoverStyle.BgColor = new Color(0.4f, 0.8f, 0.4f); // Lighter green
+			pressedStyle.BgColor = new Color(0.2f, 0.6f, 0.2f); // Darker green
+		}
+		else
+		{
+			normalStyle.BgColor = new Color(0.5f, 0.5f, 0.5f); // Gray
+			hoverStyle.BgColor = new Color(0.6f, 0.6f, 0.6f); // Lighter gray
+			pressedStyle.BgColor = new Color(0.4f, 0.4f, 0.4f); // Darker gray
+		}
+
+		equipButton.AddThemeStyleboxOverride("normal", normalStyle);
+		equipButton.AddThemeStyleboxOverride("hover", hoverStyle);
+		equipButton.AddThemeStyleboxOverride("pressed", pressedStyle);
+
+		// Connect button signal
+		equipButton.Pressed += () => OnEquipButtonPressed(elementId);
+
+		row.AddChild(equipButton);
+
+		return row;
+	}
+
+	private void OnEquipButtonPressed(string elementId)
+	{
+		bool isEquipped = inventory.IsEquipped(elementId);
+
+		if (isEquipped)
+		{
+			// Unequip
+			inventory.UnequipElement(elementId);
+			GD.Print($"Unequipped {elementId}");
+		}
+		else
+		{
+			// Try to equip
+			bool success = inventory.EquipElement(elementId);
+			if (!success)
+			{
+				GD.Print("Cannot equip: all slots full. Unequip an element first.");
+			}
+			else
+			{
+				GD.Print($"Equipped {elementId}");
+			}
+		}
+
+		// Refresh the inventory list
+		RefreshInventoryList();
+	}
+
+	private Button CreateElementButton(string elementId, Element element, int count, int listNumber)
+	{
+		var button = new Button();
+		button.Text = $"{element?.Name ?? elementId} x{count}";
+		button.CustomMinimumSize = new Vector2(0, 30);
+		button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+
+		// Set color
+		if (element != null)
+		{
+			var style = new StyleBoxFlat();
+			style.BgColor = element.Color * 0.5f;
+			button.AddThemeStyleboxOverride("normal", style);
+		}
+
+		// Connect signal
+		button.Pressed += () => SelectElement(elementId, listNumber);
+
+		return button;
+	}
+
+	private void SelectElement(string elementId, int listNumber)
+	{
+		if (listNumber == 1)
+		{
+			selectedElement1 = elementId;
+			GD.Print($"Selected element 1: {elementId}");
+		}
+		else
+		{
+			selectedElement2 = elementId;
+			GD.Print($"Selected element 2: {elementId}");
+		}
+
+		// Update result label to show combination preview
+		if (!string.IsNullOrEmpty(selectedElement1) && !string.IsNullOrEmpty(selectedElement2))
+		{
+			// Get element data for display
+			Element elem1 = ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement1);
+			Element elem2 = ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement2);
+
+			// All elements can be combined with LLM!
+			resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2} = ???";
+			resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+		}
+	}
+
+	private async void OnCombinePressed()
+	{
+		if (string.IsNullOrEmpty(selectedElement1) || string.IsNullOrEmpty(selectedElement2))
+		{
+			resultLabel.Text = "Select two elements first!";
+			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			return;
+		}
+
+		// Show loading message
+		resultLabel.Text = "Combining...";
+		resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+		llmOutputLabel.Text = "🔮 Generating element with LLM...";
+
+		var startTime = DateTime.Now;
+
+		try
+		{
+			Element newElement = null;
+
+			// Use LLM to generate the element (name + ability)
+			if (useLLM && llmGenerator != null)
+			{
+				llmOutputLabel.Text = "🔮 Asking LLM to create new element...";
+				newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: false);
+			}
+			else
+			{
+				resultLabel.Text = "LLM is disabled - cannot generate dynamic elements!";
+				resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				llmOutputLabel.Text = "Enable LLM to combine elements.";
+				llmOutputLabel.AddThemeColorOverride("font_color", Colors.Red);
+				return;
+			}
+
+			if (newElement != null)
+			{
+				var elapsed = (DateTime.Now - startTime).TotalSeconds;
+
+				// Use the inventory's combine method
+				var result = inventory.CombineElements(selectedElement1, selectedElement2, newElement);
+
+				if (result != null)
+				{
+					// Cache the element if it's new
+					if (!ElementRegistry.HasElement(newElement.Id))
+					{
+						ElementRegistry.CacheElement(newElement);
+						GD.Print($"Cached new element: {newElement.Name}");
+					}
+
+					// Show success
+					resultLabel.Text = $"Created: {newElement.Name}!";
+					resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+					// Display LLM output
+					var llmOutput = $"✨ Element Created! ({elapsed:F2}s)\n\n";
+					llmOutput += $"Element: {newElement.Name}\n";
+					llmOutput += $"Description: {newElement.Description}\n";
+					llmOutput += $"Color: {newElement.ColorHex}\n";
+					llmOutput += $"Tier: {newElement.Tier}\n\n";
+
+					if (newElement.Ability != null)
+					{
+						llmOutput += "Ability: Generated\n";
+						llmOutput += $"{newElement.Ability.Description}\n";
+						llmOutput += $"Cooldown: {newElement.Ability.Cooldown}s\n";
+					}
+
+					llmOutputLabel.Text = llmOutput;
+					llmOutputLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+					// Clear selections
+					selectedElement1 = null;
+					selectedElement2 = null;
+
+					// Refresh lists
+					RefreshAll();
+				}
+			}
+			else
+			{
+				resultLabel.Text = "Cannot combine these elements!";
+				resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				llmOutputLabel.Text = "No valid combination found.";
+				llmOutputLabel.AddThemeColorOverride("font_color", Colors.Red);
+			}
+		}
+		catch (Exception ex)
+		{
+			resultLabel.Text = "Combination failed!";
+			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			llmOutputLabel.Text = $"❌ Error:\n{ex.Message}\n\nStack:\n{ex.StackTrace}";
+			llmOutputLabel.AddThemeColorOverride("font_color", Colors.OrangeRed);
+			GD.PrintErr($"Combination error: {ex}");
+		}
+	}
+
+	public override void _ExitTree()
+	{
+		// Clean up LLM generator
+		llmGenerator?.Dispose();
+	}
+}
