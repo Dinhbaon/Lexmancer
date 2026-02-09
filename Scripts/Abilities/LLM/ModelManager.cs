@@ -25,7 +25,6 @@ public partial class ModelManager : Node
 
 	public bool IsLoaded => _model != null;
 
-	private const string BundledModelName = "qwen2.5-7b-instruct-q4_k_m.gguf";
 	private const string BundledModelDir = "res://Assets/LLM";
 
 	public override void _Ready()
@@ -54,12 +53,16 @@ public partial class ModelManager : Node
 
 			GD.Print($"Loading GGUF model from: {modelPath}");
 			GD.Print($"  Context size: {GameConfig.LLMContextSize}");
+			GD.Print($"  Batch size: {GameConfig.LLMBatchSize}");
 			GD.Print($"  GPU layers: {GameConfig.LLMGpuLayerCount}");
+			GD.Print($"  Threads: {GameConfig.LLMThreadCount}");
 
 			_modelParams = new ModelParams(modelPath)
 			{
 				ContextSize = (uint)GameConfig.LLMContextSize,
+				BatchSize = (uint)GameConfig.LLMBatchSize,
 				GpuLayerCount = GameConfig.LLMGpuLayerCount,
+				Threads = GameConfig.LLMThreadCount,
 			};
 
 			_model = await LLamaWeights.LoadFromFileAsync(_modelParams);
@@ -79,9 +82,9 @@ public partial class ModelManager : Node
 
 	/// <summary>
 	/// Run inference with the loaded model. Thread-safe via semaphore.
-	/// Optionally enforces JSON grammar for guaranteed valid output.
+	/// ALWAYS enforces JSON grammar to guarantee valid output.
 	/// </summary>
-	public async Task<string> InferAsync(string prompt, bool enforceJson = false, CancellationToken cancellationToken = default)
+	public async Task<string> InferAsync(string prompt, CancellationToken cancellationToken = default)
 	{
 		if (!IsLoaded)
 			throw new InvalidOperationException("Model not loaded. Call InitializeAsync first.");
@@ -91,22 +94,14 @@ public partial class ModelManager : Node
 		{
 			var executor = new StatelessExecutor(_model, _modelParams);
 
-			// Create sampling pipeline with optional JSON grammar
-			var samplingPipeline = enforceJson
-				? new DefaultSamplingPipeline
-				{
-					Temperature = GameConfig.LLMTemperature,
-					Grammar = new Grammar(GetJsonGrammar(), "root")
-				}
-				: new DefaultSamplingPipeline
-				{
-					Temperature = GameConfig.LLMTemperature,
-				};
-
-			if (enforceJson)
+			// ALWAYS use grammar constraint - guarantees valid JSON
+			var samplingPipeline = new DefaultSamplingPipeline
 			{
-				GD.Print("Using JSON grammar constraint for guaranteed valid output");
-			}
+				Temperature = GameConfig.LLMTemperature,
+				Grammar = new Grammar(GetElementGrammar(), "root")
+			};
+
+			GD.Print("Using JSON grammar constraint for guaranteed valid output");
 
 			var inferenceParams = new InferenceParams
 			{
@@ -147,11 +142,31 @@ public partial class ModelManager : Node
 	}
 
 	/// <summary>
-	/// Resolve the model file path. Priority: user override > bundled asset.
+	/// GBNF grammar for element generation with FULL schema enforcement.
+	/// Enforces complete JSON structure AND validates args fields for each action type.
+	/// Guarantees 100% valid, parseable output with no runtime validation needed.
+	/// </summary>
+	private string GetElementGrammar()
+	{
+		var grammarPath = ProjectSettings.GlobalizePath("res://Assets/LLM/element_grammar.gbnf");
+		if (!File.Exists(grammarPath))
+		{
+			GD.PrintErr($"Grammar file not found: {grammarPath}");
+			// Fallback to simple JSON grammar if file not found
+			return GetJsonGrammar();
+		}
+
+		var grammarText = File.ReadAllText(grammarPath);
+		GD.Print($"Loaded element grammar from: {grammarPath} ({grammarText.Length} bytes)");
+		return grammarText;
+	}
+
+	/// <summary>
+	/// Resolve the model file path. Priority: user override > bundled asset > env variable.
 	/// </summary>
 	private string ResolveModelPath()
 	{
-		// 1. User-provided override path
+		// 1. User-provided override path (full path)
 		if (!string.IsNullOrEmpty(GameConfig.LLMModelPath))
 		{
 			if (File.Exists(GameConfig.LLMModelPath))
@@ -162,23 +177,33 @@ public partial class ModelManager : Node
 			GD.PrintErr($"User-provided model not found: {GameConfig.LLMModelPath}");
 		}
 
-		// 2. Bundled model in game assets
-		var bundledPath = ProjectSettings.GlobalizePath($"{BundledModelDir}/{BundledModelName}");
+		// 2. Get model name from config or environment variable
+		var modelName = System.Environment.GetEnvironmentVariable("LLM_MODEL_NAME")
+		                ?? GameConfig.LLMModelName;
+
+		if (string.IsNullOrEmpty(modelName))
+		{
+			GD.PrintErr("No model name specified in config or environment variable");
+			return null;
+		}
+
+		// 3. Bundled model in game assets
+		var bundledPath = ProjectSettings.GlobalizePath($"{BundledModelDir}/{modelName}");
 		if (File.Exists(bundledPath))
 		{
-			GD.Print($"Using bundled model: {bundledPath}");
+			GD.Print($"Using bundled model: {modelName}");
 			return bundledPath;
 		}
 
-		// 3. Check user data directory (for development convenience)
-		var userDataPath = Path.Combine(OS.GetUserDataDir(), "llm_models", BundledModelName);
+		// 4. Check user data directory (for development convenience)
+		var userDataPath = Path.Combine(OS.GetUserDataDir(), "llm_models", modelName);
 		if (File.Exists(userDataPath))
 		{
 			GD.Print($"Using model from user data: {userDataPath}");
 			return userDataPath;
 		}
 
-		GD.PrintErr($"Model not found at:");
+		GD.PrintErr($"Model '{modelName}' not found at:");
 		GD.PrintErr($"  Bundled: {bundledPath}");
 		GD.PrintErr($"  User data: {userDataPath}");
 		return null;

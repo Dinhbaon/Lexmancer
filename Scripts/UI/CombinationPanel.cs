@@ -28,6 +28,12 @@ public partial class CombinationPanel : Control
 	private Label llmOutputLabel;
 	private CheckBox useLLMCheckbox;
 
+	// Cached combination UI
+	private VBoxContainer cachedCombinationContainer;
+	private Label cachedElementLabel;
+	private Button useCachedButton;
+	private Button generateNewButton;
+
 	// Inventory tab elements
 	private VBoxContainer inventoryElementList;
 	private ScrollContainer inventoryScrollContainer;
@@ -160,10 +166,16 @@ public partial class CombinationPanel : Control
 
 	private void CreateCombineTab()
 	{
+		// Create a scroll container for the entire tab
+		var combineTabScroll = new ScrollContainer();
+		combineTabScroll.Name = "Combine";
+		combineTabScroll.SizeFlagsVertical = SizeFlags.ExpandFill;
+		tabContainer.AddChild(combineTabScroll);
+
 		var combineTab = new VBoxContainer();
-		combineTab.Name = "Combine";
 		combineTab.AddThemeConstantOverride("separation", 10);
-		tabContainer.AddChild(combineTab);
+		combineTab.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+		combineTabScroll.AddChild(combineTab);
 
 		// Top row: LLM checkbox
 		var topHBox = new HBoxContainer();
@@ -223,14 +235,64 @@ public partial class CombinationPanel : Control
 		elementList2.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 		scroll2.AddChild(elementList2);
 
-		// Combine button (centered)
+		// Cached combination container (shows previous combinations)
+		cachedCombinationContainer = new VBoxContainer();
+		cachedCombinationContainer.AddThemeConstantOverride("separation", 10);
+		cachedCombinationContainer.Visible = false; // Hidden by default
+		combineTab.AddChild(cachedCombinationContainer);
+
+		var cachedHeaderLabel = new Label();
+		cachedHeaderLabel.Text = "Previously Generated:";
+		cachedHeaderLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+		cachedHeaderLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		cachedCombinationContainer.AddChild(cachedHeaderLabel);
+
+		// Scroll container for cached element label (prevents overflow)
+		var cachedScrollContainer = new ScrollContainer();
+		cachedScrollContainer.CustomMinimumSize = new Vector2(0, 60);
+		cachedScrollContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
+		cachedCombinationContainer.AddChild(cachedScrollContainer);
+
+		cachedElementLabel = new Label();
+		cachedElementLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		cachedElementLabel.AddThemeColorOverride("font_color", Colors.White);
+		cachedElementLabel.AddThemeFontSizeOverride("font_size", 16);
+		cachedElementLabel.AutowrapMode = TextServer.AutowrapMode.Word;
+		cachedElementLabel.CustomMinimumSize = new Vector2(550, 0); // Force wrapping
+		cachedScrollContainer.AddChild(cachedElementLabel);
+
+		// Buttons row for cached combination
+		var cachedButtonsHBox = new HBoxContainer();
+		cachedButtonsHBox.AddThemeConstantOverride("separation", 20);
+		cachedButtonsHBox.Alignment = BoxContainer.AlignmentMode.Center;
+		cachedCombinationContainer.AddChild(cachedButtonsHBox);
+
+		useCachedButton = new Button();
+		useCachedButton.Text = "Use Previous";
+		useCachedButton.CustomMinimumSize = new Vector2(150, 40);
+		useCachedButton.Pressed += OnUseCachedPressed;
+		var useCachedStyle = new StyleBoxFlat();
+		useCachedStyle.BgColor = new Color(0.3f, 0.7f, 0.3f);
+		useCachedButton.AddThemeStyleboxOverride("normal", useCachedStyle);
+		cachedButtonsHBox.AddChild(useCachedButton);
+
+		generateNewButton = new Button();
+		generateNewButton.Text = "Generate New";
+		generateNewButton.CustomMinimumSize = new Vector2(150, 40);
+		generateNewButton.Pressed += () => OnCombinePressed(forceNew: true);
+		var generateNewStyle = new StyleBoxFlat();
+		generateNewStyle.BgColor = new Color(0.7f, 0.5f, 0.2f);
+		generateNewButton.AddThemeStyleboxOverride("normal", generateNewStyle);
+		cachedButtonsHBox.AddChild(generateNewButton);
+
+		// Combine button (centered) - only shown when no cached version exists
 		var buttonContainer = new CenterContainer();
 		combineTab.AddChild(buttonContainer);
 
 		combineButton = new Button();
 		combineButton.Text = "Combine!";
 		combineButton.CustomMinimumSize = new Vector2(150, 40);
-		combineButton.Pressed += OnCombinePressed;
+		combineButton.Pressed += () => OnCombinePressed(forceNew: false);
 		buttonContainer.AddChild(combineButton);
 
 		// Result label
@@ -242,8 +304,6 @@ public partial class CombinationPanel : Control
 
 		// LLM output section with background
 		var llmOutputContainer = new PanelContainer();
-		llmOutputContainer.CustomMinimumSize = new Vector2(0, 100);
-		llmOutputContainer.SizeFlagsVertical = SizeFlags.ExpandFill;
 		combineTab.AddChild(llmOutputContainer);
 
 		var outputStyle = new StyleBoxFlat();
@@ -261,7 +321,6 @@ public partial class CombinationPanel : Control
 		llmOutputLabel.Text = "LLM Output will appear here...";
 		llmOutputLabel.AddThemeColorOverride("font_color", Colors.Cyan);
 		llmOutputLabel.AutowrapMode = TextServer.AutowrapMode.Word;
-		llmOutputLabel.SizeFlagsVertical = SizeFlags.ExpandFill;
 		llmOutputLabel.VerticalAlignment = VerticalAlignment.Top;
 		outputMargin.AddChild(llmOutputLabel);
 	}
@@ -485,17 +544,93 @@ public partial class CombinationPanel : Control
 		// Update result label to show combination preview
 		if (!string.IsNullOrEmpty(selectedElement1) && !string.IsNullOrEmpty(selectedElement2))
 		{
-			// Get element data for display
-			Element elem1 = ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement1);
-			Element elem2 = ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement2);
+			// Get element data for display (check registry first for combined elements)
+			Element elem1 = ElementRegistry.GetElement(selectedElement1)
+				?? ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement1);
+			Element elem2 = ElementRegistry.GetElement(selectedElement2)
+				?? ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement2);
 
-			// All elements can be combined with LLM!
-			resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2} = ???";
-			resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+			// Check if this combination has been seen before
+			Element cachedCombination = llmGenerator?.GetCachedCombination(selectedElement1, selectedElement2);
+
+			if (cachedCombination != null)
+			{
+				// Show cached combination UI
+				cachedCombinationContainer.Visible = true;
+				combineButton.Visible = false;
+
+				cachedElementLabel.Text = $"✨ {cachedCombination.Name}\n{cachedCombination.Description}";
+
+				resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2}";
+				resultLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+			}
+			else
+			{
+				// Show regular combine button
+				cachedCombinationContainer.Visible = false;
+				combineButton.Visible = true;
+
+				resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2} = ???";
+				resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+			}
 		}
 	}
 
-	private async void OnCombinePressed()
+	private async void OnUseCachedPressed()
+	{
+		if (string.IsNullOrEmpty(selectedElement1) || string.IsNullOrEmpty(selectedElement2))
+		{
+			resultLabel.Text = "Select two elements first!";
+			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			return;
+		}
+
+		// Get cached combination
+		Element cachedElement = llmGenerator?.GetCachedCombination(selectedElement1, selectedElement2);
+
+		if (cachedElement == null)
+		{
+			resultLabel.Text = "Cached element not found!";
+			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			return;
+		}
+
+		// Use the inventory's combine method with the cached element
+		var result = inventory.CombineElements(selectedElement1, selectedElement2, cachedElement);
+
+		if (result != null)
+		{
+			// Show success
+			resultLabel.Text = $"Created: {cachedElement.Name}! (from cache)";
+			resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+			// Display cached element info
+			var output = $"♻️ Using Previous Combination!\n\n";
+			output += $"Element: {cachedElement.Name}\n";
+			output += $"Description: {cachedElement.Description}\n";
+			output += $"Color: {cachedElement.ColorHex}\n";
+			output += $"Tier: {cachedElement.Tier}\n\n";
+
+			if (cachedElement.Ability != null)
+			{
+				output += "Ability: Cached\n";
+				output += $"{cachedElement.Ability.Description}\n";
+				output += $"Cooldown: {cachedElement.Ability.Cooldown}s\n";
+			}
+
+			llmOutputLabel.Text = output;
+			llmOutputLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+
+			// Clear selections
+			selectedElement1 = null;
+			selectedElement2 = null;
+
+			// Refresh lists
+			RefreshAll();
+		}
+	}
+
+	private async void OnCombinePressed(bool forceNew = false)
 	{
 		if (string.IsNullOrEmpty(selectedElement1) || string.IsNullOrEmpty(selectedElement2))
 		{
@@ -518,8 +653,10 @@ public partial class CombinationPanel : Control
 			// Use LLM to generate the element (name + ability)
 			if (useLLM && llmGenerator != null)
 			{
-				llmOutputLabel.Text = "🔮 Asking LLM to create new element...";
-				newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: false);
+				llmOutputLabel.Text = forceNew
+					? "🔮 Generating NEW element variation..."
+					: "🔮 Asking LLM to create new element...";
+				newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: true);
 			}
 			else
 			{
@@ -551,7 +688,9 @@ public partial class CombinationPanel : Control
 					resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
 					// Display LLM output
-					var llmOutput = $"✨ Element Created! ({elapsed:F2}s)\n\n";
+					var llmOutput = forceNew
+						? $"✨ New Variation Generated! ({elapsed:F2}s)\n\n"
+						: $"✨ Element Created! ({elapsed:F2}s)\n\n";
 					llmOutput += $"Element: {newElement.Name}\n";
 					llmOutput += $"Description: {newElement.Description}\n";
 					llmOutput += $"Color: {newElement.ColorHex}\n";
@@ -595,7 +734,6 @@ public partial class CombinationPanel : Control
 
 	public override void _ExitTree()
 	{
-		// Clean up LLM generator
-		llmGenerator?.Dispose();
+		// Nothing to clean up
 	}
 }

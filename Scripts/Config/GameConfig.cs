@@ -16,13 +16,15 @@ public static class GameConfig
 	// LLamaSharp Direct Inference Settings
 	public static bool UseLLamaSharpDirect { get; set; } = true;  // Use bundled model instead of Ollama HTTP
 	public static string LLMModelPath { get; set; } = "";  // Override path; empty = use bundled model
-	public static int LLMContextSize { get; set; } = 2048;
-	public static int LLMGpuLayerCount { get; set; } = 0;  // 0=CPU, -1=auto-detect GPU
+	public static string LLMModelName { get; set; } = "granite-3.1-3b-a800m-instruct-Q4_K_M.gguf";  // IBM Granite 3.1 MoE (3.3B total, 800M active)
+	public static int LLMContextSize { get; set; } = 4096;  // Increased to prevent KV cache overflow
+	public static int LLMBatchSize { get; set; } = 1024;  // Must be >= largest prompt size to avoid NoKvSlot errors
+	public static int LLMGpuLayerCount { get; set; } = 0;  // CPU-only: no GPU layers (AMD iGPU not supported)
+	public static int LLMThreadCount { get; set; } = 6;  // Use 6 physical cores (12 threads / 2)
 	public static float LLMTemperature { get; set; } = 0.7f;
-	public static int LLMMaxTokens { get; set; } = 512;
+	public static int LLMMaxTokens { get; set; } = 1200;  // Increased to handle complex ability JSON (~800-1000 tokens)
 
 	// Element Settings
-	public static bool GenerateElementAbilitiesOnStartup { get; set; } = false;
 	public static bool CacheGeneratedAbilities { get; set; } = true;
 
 	// Debug Settings
@@ -40,9 +42,12 @@ public static class GameConfig
 			GD.Print($"  LLamaSharp Direct: {UseLLamaSharpDirect}");
 			if (UseLLamaSharpDirect)
 			{
-				GD.Print($"  Model Path: {(string.IsNullOrEmpty(LLMModelPath) ? "(bundled)" : LLMModelPath)}");
+				GD.Print($"  Model Name: {LLMModelName}");
+				GD.Print($"  Model Path Override: {(string.IsNullOrEmpty(LLMModelPath) ? "(none)" : LLMModelPath)}");
 				GD.Print($"  Context Size: {LLMContextSize}");
+				GD.Print($"  Batch Size: {LLMBatchSize}");
 				GD.Print($"  GPU Layers: {LLMGpuLayerCount}");
+				GD.Print($"  Threads: {LLMThreadCount}");
 				GD.Print($"  Temperature: {LLMTemperature}");
 				GD.Print($"  Max Tokens: {LLMMaxTokens}");
 			}
@@ -51,7 +56,6 @@ public static class GameConfig
 				GD.Print($"  LLM URL: {LLMBaseUrl}");
 				GD.Print($"  LLM Model: {LLMModel}");
 			}
-			GD.Print($"  Generate on Startup: {GenerateElementAbilitiesOnStartup}");
 			GD.Print($"  Cache Abilities: {CacheGeneratedAbilities}");
 		}
 		GD.Print($"Verbose Logging: {VerboseLogging}");

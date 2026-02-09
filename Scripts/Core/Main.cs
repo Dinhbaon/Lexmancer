@@ -11,7 +11,6 @@ using Lexmancer.Abilities.LLM;
 public partial class Main : Node2D
 {
 	[Export] public bool UseLLM { get; set; } = false;
-	[Export] public bool GenerateAbilitiesOnStartup { get; set; } = false;
 
 	private CharacterBody2D player;
 	private GameManager gameManager;
@@ -24,7 +23,7 @@ public partial class Main : Node2D
 
 		// Set configuration
 		GameConfig.UseLLM = UseLLM;
-		GameConfig.GenerateElementAbilitiesOnStartup = GenerateAbilitiesOnStartup;
+		GameConfig.LLMModelName = "granite-3.1-3b-a800m-instruct-Q4_K_M.gguf";
 		GameConfig.PrintConfig();
 
 		// If using LLM with LLamaSharp direct inference, load model first
@@ -85,18 +84,9 @@ public partial class Main : Node2D
 			llmGenerator = new LLMElementGenerator("player_001", useLLM: true);
 		}
 
-		// Load hardcoded elements (or generate with LLM)
-		if (GameConfig.UseLLM && GameConfig.GenerateElementAbilitiesOnStartup)
-		{
-			// Async LLM generation - will call ContinueGameInitialization when done
-			CallDeferred(nameof(LoadElementsWithLLM));
-		}
-		else
-		{
-			// Synchronous hardcoded loading
-			LoadHardcodedElements();
-			ContinueGameInitialization();
-		}
+		// Load hardcoded elements
+		LoadHardcodedElements();
+		ContinueGameInitialization();
 	}
 
 	/// <summary>
@@ -160,52 +150,6 @@ public partial class Main : Node2D
 
 		GD.Print($"Loaded {ElementDefinitions.BaseElements.Count} base elements");
 		ElementRegistry.PrintStats();
-	}
-
-	/// <summary>
-	/// Load elements with LLM-generated abilities
-	/// </summary>
-	private async void LoadElementsWithLLM()
-	{
-		GD.Print("Generating elements with LLM...");
-		GD.Print("⏳ This may take 10-30 seconds depending on your LLM...");
-
-		try
-		{
-			var allElements = ElementDefinitions.GetAllElements();
-			int generated = 0;
-			int cached = 0;
-
-			foreach (var element in allElements)
-			{
-				GD.Print($"Generating ability for {element.Name}...");
-
-				// Generate ability with LLM
-				var ability = await llmGenerator.GenerateAbilityForElementAsync(element, forceNew: false);
-				element.Ability = ability;
-
-				// Cache element with new ability
-				ElementRegistry.CacheElement(element);
-
-				if (ability.GeneratedAt > 0)
-					generated++;
-				else
-					cached++;
-			}
-
-			GD.Print($"✅ LLM generation complete!");
-			GD.Print($"   Generated: {generated}, Cached: {cached}");
-			ElementRegistry.PrintStats();
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"❌ LLM generation failed: {ex.Message}");
-			GD.Print("Falling back to hardcoded elements...");
-			LoadHardcodedElements();
-		}
-
-		// Continue with game initialization after elements are loaded
-		ContinueGameInitialization();
 	}
 
 	/// <summary>

@@ -125,12 +125,20 @@ public class Element
 			{
 				try
 				{
+					GD.Print($"[Element.Ability] Lazy-loading ability for {Name} from JSON ({AbilityJson.Length} chars)");
 					ability = AbilityV2.FromJson(AbilityJson);
+					GD.Print($"[Element.Ability] ✓ Successfully loaded ability");
 				}
 				catch (Exception ex)
 				{
-					GD.PrintErr($"Failed to load ability for element {Name}: {ex.Message}");
+					GD.PrintErr($"❌ Failed to load ability for element {Name}: {ex.Message}");
+					GD.PrintErr($"   Stack trace: {ex.StackTrace}");
+					GD.PrintErr($"   AbilityJson preview: {AbilityJson.Substring(0, Math.Min(300, AbilityJson.Length))}");
 				}
+			}
+			else if (ability == null)
+			{
+				GD.PrintErr($"❌ Element {Name} has no AbilityJson to load!");
 			}
 			return ability;
 		}

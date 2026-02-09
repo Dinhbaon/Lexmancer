@@ -2,13 +2,14 @@ using Godot;
 using System;
 using Lexmancer.Combat;
 using Lexmancer.UI;
+using Lexmancer.Core;
 
 namespace Lexmancer.Enemies;
 
 /// <summary>
 /// Basic melee chaser enemy for vertical slice
 /// </summary>
-public partial class BasicEnemy : CharacterBody2D
+public partial class BasicEnemy : CharacterBody2D, IMoveable
 {
 	[Export] public float MaxHealth { get; set; } = 50f;
 	[Export] public float MoveSpeed { get; set; } = 100f;
@@ -57,39 +58,24 @@ public partial class BasicEnemy : CharacterBody2D
 		if (!health.IsAlive)
 			return;
 
-		// Check for movement-impairing status effects
-		var statusManager = Abilities.Execution.StatusEffectManager.Instance;
-		if (statusManager != null)
-		{
-			// Stunned or frozen - cannot move at all
-			if (statusManager.HasStatus(this, "stunned") || statusManager.HasStatus(this, "frozen"))
-			{
-				Velocity = Vector2.Zero;
-				MoveAndSlide();
-				return;
-			}
-		}
-
 		// Move toward player
 		if (player != null)
 		{
+			// Calculate intended movement direction
 			var direction = (player.GlobalPosition - GlobalPosition).Normalized();
 
-			// Apply status effect movement modifiers
-			float speedMultiplier = 1.0f;
-
+			// Let StatusEffectManager handle all movement-based status effects
+			var statusManager = Abilities.Execution.StatusEffectManager.Instance;
 			if (statusManager != null)
 			{
-				// Slowed - 50% speed
-				if (statusManager.HasStatus(this, "slowed"))
-					speedMultiplier *= 0.5f;
-
-				// Feared - move away from player instead
-				if (statusManager.HasStatus(this, "feared"))
-					direction = -direction;
+				statusManager.ApplyMovementEffects(this, direction);
+			}
+			else
+			{
+				// Fallback if status manager not ready
+				Velocity = direction * MoveSpeed;
 			}
 
-			Velocity = direction * MoveSpeed * speedMultiplier;
 			MoveAndSlide();
 
 			// Check for collision with player
@@ -170,4 +156,8 @@ public partial class BasicEnemy : CharacterBody2D
 	{
 		return health?.HealthPercentage ?? 0;
 	}
+
+	// IMoveable interface implementation
+	public CharacterBody2D GetBody() => this;
+	public float GetBaseMoveSpeed() => MoveSpeed;
 }

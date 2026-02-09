@@ -156,16 +156,61 @@ public partial class StatusEffectManager : Node
                     Combat.DamageSystem.ApplyDamage(entity, 1f * delta, "lightning");
                     break;
 
-                // Movement-based effects are handled by the entity itself (see BasicEnemy)
+                // Movement-based effects are now handled via ApplyMovementEffects()
                 case StatusEffectType.Frozen:
                 case StatusEffectType.Slowed:
                 case StatusEffectType.Stunned:
                 case StatusEffectType.Feared:
                 case StatusEffectType.Weakened:
-                    // These are checked by the entity's movement code
+                    // These are applied when entity calls ApplyMovementEffects()
                     break;
             }
         }
+    }
+
+    /// <summary>
+    /// Apply movement-based status effects to an entity
+    /// Call this from the entity's _PhysicsProcess after calculating intended direction
+    /// </summary>
+    /// <param name="entity">The moveable entity (must implement IMoveable)</param>
+    /// <param name="intendedDirection">The normalized direction the entity wants to move</param>
+    public void ApplyMovementEffects(Core.IMoveable entity, Vector2 intendedDirection)
+    {
+        var body = entity.GetBody();
+        if (body == null || !GodotObject.IsInstanceValid(body))
+            return;
+
+        // Check for complete movement lockdown
+        if (HasStatus(body, StatusEffectType.Frozen) || HasStatus(body, StatusEffectType.Stunned))
+        {
+            body.Velocity = Vector2.Zero;
+            return;
+        }
+
+        // Calculate movement modifiers
+        float speedMultiplier = 1.0f;
+        Vector2 direction = intendedDirection;
+
+        // Slowed - reduce speed by 50%
+        if (HasStatus(body, StatusEffectType.Slowed))
+        {
+            speedMultiplier *= 0.5f;
+        }
+
+        // Feared - reverse direction
+        if (HasStatus(body, StatusEffectType.Feared))
+        {
+            direction = -direction;
+        }
+
+        // Weakened - reduce speed by 25% (can stack with slowed)
+        if (HasStatus(body, StatusEffectType.Weakened))
+        {
+            speedMultiplier *= 0.75f;
+        }
+
+        // Apply final velocity
+        body.Velocity = direction * entity.GetBaseMoveSpeed() * speedMultiplier;
     }
 
     /// <summary>

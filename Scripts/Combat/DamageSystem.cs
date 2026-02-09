@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using Lexmancer.UI;
 
 namespace Lexmancer.Combat;
 
@@ -29,6 +30,10 @@ public static class DamageSystem
 		float finalDamage = CalculateDamage(amount, element, target);
 
 		health.TakeDamage(finalDamage);
+
+		// Spawn floating damage number
+		SpawnDamageNumber(target, finalDamage, DamageNumberType.Normal);
+
 		return true;
 	}
 
@@ -49,6 +54,10 @@ public static class DamageSystem
 		}
 
 		health.Heal(amount);
+
+		// Spawn floating healing number (green)
+		SpawnDamageNumber(target, amount, DamageNumberType.Healing);
+
 		return true;
 	}
 
@@ -96,5 +105,30 @@ public static class DamageSystem
 	{
 		var health = FindHealthComponent(node);
 		return health?.IsAlive ?? false;
+	}
+
+	/// <summary>
+	/// Spawn a floating damage number above the target
+	/// </summary>
+	private static void SpawnDamageNumber(Node target, float amount, DamageNumberType type)
+	{
+		// Get position from target (if it's a Node2D)
+		if (target is Node2D target2D)
+		{
+			// Find world node (root of scene tree)
+			var worldNode = target.GetTree()?.Root?.GetNode("Main");
+			if (worldNode == null)
+			{
+				// Fallback: use current scene root
+				worldNode = target.GetTree()?.CurrentScene;
+			}
+
+			if (worldNode != null)
+			{
+				// Spawn slightly above the target
+				var spawnPosition = target2D.GlobalPosition + new Vector2(0, -20);
+				DamageNumber.Spawn(worldNode, spawnPosition, amount, type);
+			}
+		}
 	}
 }

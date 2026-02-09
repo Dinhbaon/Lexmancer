@@ -52,297 +52,6 @@ public class LLMClientV2
     }
 
     /// <summary>
-    /// Generate ability from primitives using creative effect scripting
-    /// </summary>
-    public async Task<AbilityV2> GenerateAbilityAsync(string[] primitives)
-    {
-        try
-        {
-            if (_useDirect)
-                return await GenerateAbilityDirectAsync(primitives);
-            else
-                return await GenerateAbilityHttpAsync(primitives);
-        }
-        catch (Exception ex)
-        {
-            GD.PrintErr($"LLM request failed: {ex.Message}");
-            return CreateFallbackAbility(primitives);
-        }
-    }
-
-    private async Task<AbilityV2> GenerateAbilityDirectAsync(string[] primitives)
-    {
-        var prompt = BuildCreativePrompt(primitives);
-
-        GD.Print($"Generating ability via LLamaSharp direct inference");
-        GD.Print($"Primitives: {string.Join(" + ", primitives)}");
-
-        // Use JSON grammar constraint for guaranteed valid JSON
-        var jsonResponse = await ModelManager.Instance.InferAsync(prompt, enforceJson: true);
-
-        GD.Print($"Received response from LLamaSharp ({jsonResponse.Length} chars)");
-
-        var ability = AbilityBuilder.FromLLMResponse(jsonResponse);
-        GD.Print("✓ Generated ability via direct inference");
-        return ability;
-    }
-
-    private async Task<AbilityV2> GenerateAbilityHttpAsync(string[] primitives)
-    {
-        var prompt = BuildCreativePrompt(primitives);
-
-        GD.Print($"Sending request to LLM: {baseUrl} (model: {model})");
-        GD.Print($"Primitives: {string.Join(" + ", primitives)}");
-
-        var request = new GenerateRequest
-        {
-            Prompt = prompt,
-            Format = "json",
-            Stream = false,
-            Model = model
-        };
-
-        var responseBuilder = new StringBuilder();
-        await foreach (var chunk in ollama.Generate(request))
-        {
-            if (chunk?.Response != null)
-            {
-                responseBuilder.Append(chunk.Response);
-            }
-        }
-
-        var jsonResponse = responseBuilder.ToString();
-        GD.Print($"Received response from LLM ({jsonResponse.Length} chars)");
-
-        var ability = AbilityBuilder.FromLLMResponse(jsonResponse);
-        GD.Print("Generated ability via HTTP");
-        return ability;
-    }
-
-    private string BuildCreativePrompt(string[] primitives)
-    {
-        var primitivesStr = string.Join(" + ", primitives);
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-        return $@"You are a creative game designer AI for a roguelike action game.
-
-Create a UNIQUE ability from: {primitivesStr}
-
-ELEMENT CHARACTERISTICS:
-- Fire: Burns, spreads, explosive, aggressive (DoT, area denial)
-- Ice: Slows, freezes, defensive, control (CC, shields, walls)
-- Lightning: Fast, chains, shocking, multi-target
-- Poison: Stacking DoT, corrupting, lingering
-- Earth: Heavy, knockback, shields, solid
-- Wind: Fast, pushing, mobility, light
-- Shadow: Life drain, debuffs, fear, dark
-- Light: Healing, buffs, purification, radiant
-
-THINK CREATIVELY about how these elements INTERACT:
-- How do they enhance or conflict with each other?
-- What unique mechanics emerge from the combination?
-- What would this look like visually?
-
-EFFECT SCRIPTING - Use these ACTIONS:
-
-SPAWNING (with speed/timing variety):
-- spawn_projectile: {{""count"": 1-5, ""pattern"": ""single|spiral|spread|circle"", ""speed"": 50-1200, ""acceleration"": -500 to 500 (optional)}}
-  * acceleration: Makes projectile speed up (positive) or slow down (negative) over time
-  * Examples: Lightning should be fast + accelerate, Earth should start fast but decelerate (heavy)
-- spawn_area: {{""radius"": 50-300, ""duration"": 1-10, ""lingering_damage"": 0-20, ""growth_time"": 0-3 (optional)}}
-  * growth_time: 0 = instant area, >0 = grows from center over time (e.g., lava spreads slowly, lightning explosion is instant)
-- spawn_beam: {{""length"": 200-800, ""width"": 10-50, ""duration"": 0.5-3, ""travel_time"": 0-2 (optional)}}
-  * travel_time: 0 = instant beam (light), >0 = beam extends over time (slower elements)
-
-DAMAGE:
-- damage: {{""amount"": 10-50, ""element"": ""{primitives[0]}""}}
-  OR {{""formula"": ""20 * (1 + target.status_stacks * 0.15)""}}
-- apply_status: {{""status"": ""burning|frozen|poisoned|shocked|slowed|stunned|weakened|feared"", ""duration"": 1-10, ""stacks"": true|false}}
-  * StatusEffectType ids: burning, frozen, poisoned, shocked, slowed, stunned, weakened, feared
-
-MODIFIERS:
-- chain_to_nearby: {{""max_chains"": 2-5, ""range"": 100-300}}
-- knockback: {{""force"": 100-500, ""direction"": ""away|towards|up""}}
-- heal: {{""amount"": 10-30}} (for light element)
-- repeat: {{""count"": 2-5, ""interval"": 0.5-2}}
-
-NESTING - Actions can have ""on_hit"" or ""on_expire"":
-{{
-  ""action"": ""spawn_projectile"",
-  ""args"": {{""count"": 3, ""pattern"": ""spread""}},
-  ""on_hit"": [
-    {{""action"": ""damage"", ""args"": {{""amount"": 25}}}},
-    {{""action"": ""apply_status"", ""args"": {{""status"": ""burning""}}}}
-  ]
-}}
-
-RETURN FORMAT:
-{{
-  ""description"": ""Vivid description of visuals and mechanics"",
-  ""primitives"": [{string.Join(", ", primitives.Select(p => $"\"{p}\""))}],
-  ""effects"": [
-    {{
-      ""script"": [
-        {{""action"": ""action_name"", ""args"": {{}}, ""on_hit"": []}}
-      ]
-    }}
-  ],
-  ""cooldown"": 2.5,
-  ""version"": 2,
-  ""generated_at"": {timestamp}
-}}
-
-EXAMPLES:
-
-Fire alone - PROJECTILE with burning (medium speed):
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_projectile"", ""args"": {{""count"": 1, ""speed"": 400}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 30, ""element"": ""fire""}}}},
-          {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 4}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Lightning - FAST PROJECTILE with acceleration:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_projectile"", ""args"": {{""count"": 1, ""speed"": 500, ""acceleration"": 200}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 25, ""element"": ""lightning""}}}},
-          {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 3}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Light - INSTANT BEAM (fast):
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_beam"", ""args"": {{""length"": 600, ""width"": 20, ""duration"": 0.8, ""travel_time"": 0}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 35, ""element"": ""light""}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Ice + Earth - SLOW GROWING BEAM:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_beam"", ""args"": {{""length"": 400, ""width"": 40, ""duration"": 1.5, ""travel_time"": 0.6}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 28, ""element"": ""ice""}}}},
-          {{""action"": ""knockback"", ""args"": {{""force"": 400, ""direction"": ""away""}}}},
-          {{""action"": ""apply_status"", ""args"": {{""status"": ""slowed"", ""duration"": 3}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Fire + Earth - GROWING LAVA POOL (spreads over time):
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_area"", ""args"": {{""radius"": 120, ""duration"": 5, ""lingering_damage"": 8, ""growth_time"": 1.2}},
-        ""on_expire"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 40, ""area_radius"": 150, ""element"": ""fire""}}}},
-          {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 3}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Shadow - INSTANT AOE (sudden darkness):
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_area"", ""args"": {{""radius"": 100, ""duration"": 2, ""lingering_damage"": 10, ""growth_time"": 0}}}}
-    ]
-  }}]
-}}
-
-Shadow + Poison - BEAM with life drain:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_beam"", ""args"": {{""length"": 400, ""width"": 30, ""duration"": 1.5}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 25, ""element"": ""shadow""}}}},
-          {{""action"": ""heal"", ""args"": {{""amount"": 15}}}},
-          {{""action"": ""apply_status"", ""args"": {{""status"": ""weakened"", ""duration"": 5, ""stacks"": true}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Wind + Lightning - PROJECTILE spread with chain:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""spawn_projectile"", ""args"": {{""count"": 3, ""speed"": 700, ""pattern"": ""spread""}},
-        ""on_hit"": [
-          {{""action"": ""damage"", ""args"": {{""amount"": 18, ""element"": ""lightning""}}}},
-          {{""action"": ""chain_to_nearby"", ""args"": {{""max_chains"": 4, ""range"": 200}},
-            ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 12}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""stunned"", ""duration"": 1}}}}
-            ]
-          }}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Light alone - AREA with healing:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""heal"", ""args"": {{""amount"": 25}}}},
-      {{""action"": ""spawn_area"", ""args"": {{""radius"": 200, ""duration"": 3}},
-        ""on_hit"": [
-          {{""action"": ""heal"", ""args"": {{""amount"": 5}}}}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Poison + Fire - PROJECTILE spiral with repeat:
-{{
-  ""effects"": [{{
-    ""script"": [
-      {{""action"": ""repeat"", ""args"": {{""count"": 3, ""interval"": 0.6}},
-        ""on_hit"": [
-          {{""action"": ""spawn_projectile"", ""args"": {{""count"": 5, ""speed"": 400, ""pattern"": ""spiral""}},
-            ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 15}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""poisoned"", ""duration"": 5, ""stacks"": true}}}}
-            ]
-          }}
-        ]
-      }}
-    ]
-  }}]
-}}
-
-Be CREATIVE! Combine actions in unique ways!";
-    }
-
-    /// <summary>
     /// Generate a complete element (name + description + ability) from two base elements
     /// </summary>
     public async Task<ElementGenerationResponse> GenerateElementAsync(
@@ -359,8 +68,8 @@ Be CREATIVE! Combine actions in unique ways!";
             if (_useDirect)
             {
                 GD.Print($"Generating element via LLamaSharp: {element1Name} + {element2Name}");
-                // Use JSON grammar constraint for guaranteed valid JSON
-                jsonResponse = await ModelManager.Instance.InferAsync(prompt, enforceJson: true);
+                // Grammar is always enforced - guarantees valid JSON structure and enum values
+                jsonResponse = await ModelManager.Instance.InferAsync(prompt);
             }
             else
             {
@@ -413,10 +122,11 @@ Be CREATIVE! Combine actions in unique ways!";
 
                 var abilityKey = testParsed.ContainsKey("Ability") ? "Ability" : "ability";
                 var abilityJson = testParsed[abilityKey].GetRawText();
-                var ability = AbilityBuilder.FromLLMResponse(abilityJson);
+
+                var validAbility = AbilityBuilder.FromLLMResponse(abilityJson);
 
                 GD.Print($"Generated element: {name}");
-                return new ElementGenerationResponse { Id = id, Name = name, Description = description, ColorHex = colorHex, Ability = ability };
+                return new ElementGenerationResponse { Id = id, Name = name, Description = description, ColorHex = colorHex, Ability = validAbility };
             }
 
             // Otherwise parse old format (name/description/color/ability)
@@ -488,48 +198,132 @@ Examples of creative combinations:
 - Water + Fire: Steam, Mist, Geysir, Thermal Vent, Scalding Fog
 - Earth + Water: Mud, Clay, Quicksand, Swamp, Silt, Fertile Soil
 
-SUPPORTED ACTIONS (use ONLY these):
-1. ""spawn_projectile"" - Shoot projectile(s)
-   args: count (1-5), speed (200-800), pattern (""single""/""spread""/""spiral"")
+SUPPORTED ACTIONS (use a variety of these):
+1. ""spawn_melee"" - Melee attack with shaped hitbox ⚔️
+   args: shape (""arc""/""circle""/""rectangle""), range (0.5-3 tiles), arc_angle (30-360, for arc), width (0.2-2 tiles, for rectangle), windup_time (0-0.3), active_time (0.1-0.5)
+   SHAPES: arc (cone/wedge), circle (360° AOE), rectangle (thrust/stab)
 
-2. ""spawn_area"" - Create area effect
-   args: radius (50-300), duration (1-10), lingering_damage (0-20)
+2. ""spawn_projectile"" - Shoot projectile(s)
+   args: count (1-5), speed (200-800), pattern (""single""/""spread""/""spiral""), acceleration (-500 to 500, optional)
 
-3. ""spawn_beam"" - Fire a beam
-   args: length (200-800), width (10-50), duration (0.5-3)
+3. ""spawn_area"" - Create area effect
+   args: radius (50-300), duration (1-10), lingering_damage (0-20), growth_time (0-3, optional)
 
-4. ""damage"" - Deal damage
-   args: amount (1-100), element (""fire""/""water""/""earth"")
+4. ""spawn_beam"" - Fire a beam
+   args: length (200-800), width (10-50), duration (0.5-3), travel_time (0-2, optional)
 
-5. ""heal"" - Restore health
+5. ""damage"" - Deal damage
+   args: amount (1-100), element (""fire""/""water""/""earth""/""lightning""/""poison""/""wind""/""shadow""/""light"")
+
+6. ""heal"" - Restore health
    args: amount (10-50)
 
-6. ""apply_status"" - Apply status effect
-   args: status (""burning""/""frozen""/""poisoned""/""shocked""/""slowed""/""stunned""/""weakened""/""feared""), duration (1-10)
+7. ""apply_status"" - Apply status effect
+   args: status (""burning""/""frozen""/""poisoned""/""shocked""/""slowed""/""stunned""/""weakened""/""feared""), duration (1-10), stacks (true/false, optional)
    StatusEffectType ids: burning, frozen, poisoned, shocked, slowed, stunned, weakened, feared
 
-7. ""knockback"" - Push target
+8. ""knockback"" - Push target
    args: force (100-500), direction (""away""/""towards"")
 
-8. ""chain_to_nearby"" - Chain to other enemies
+9. ""chain_to_nearby"" - Chain to other enemies
    args: max_chains (2-5), range (100-300)
 
-RETURN JSON FORMAT:
+10. ""repeat"" - Repeat an action multiple times
+   args: count (2-5), interval (0.5-2)
+
+CRITICAL RULES - ABILITIES MUST BE INTERESTING:
+⚠️  NEVER create abilities that ONLY do damage without any additional effects
+⚠️  EVERY ability MUST include AT LEAST ONE of these interesting mechanics:
+    - Status effects (burning, frozen, poisoned, shocked, slowed, stunned, weakened, feared)
+    - Area effects (spawn_area with lingering_damage)
+    - Multiple projectiles (count > 1 or pattern spread/spiral)
+    - Melee attacks (spawn_melee with different shapes: arc, circle, rectangle)
+    - Chaining (chain_to_nearby)
+    - Knockback
+    - Healing
+    - Repeated casts (repeat)
+    - Beams
+    - Combination of multiple mechanics
+
+✅ GOOD EXAMPLES (use variety of attack types):
+- Arc melee slash + knockback + damage (90° cone in front)
+- Circle melee slam + stunned status (360° AOE around player)
+- Rectangle melee stab + poisoned status (thrust forward)
+- Wide arc melee sweep + damage + status (160° cleave)
+- Projectile + burning status
+- Area with lingering damage + slowed status
+- Multiple projectiles in spread pattern
+- Beam + knockback + frozen status
+- Projectile that chains to nearby enemies
+- Repeated projectile waves
+
+ATTACK TYPE VARIETY: Try to mix up attack types! Don't always default to projectiles.
+- Use melee (arc/circle/rectangle) for close-range, physical-themed elements
+- Use projectiles for ranged, magical-themed elements
+- Use areas for persistent, zone-control elements
+- Use beams for focused, piercing elements
+
+❌ BAD EXAMPLES (boring, damage only - DO NOT GENERATE):
+- Single projectile that only deals damage
+- Beam that only deals damage
+- Area that only deals instant damage without lingering effects
+
+CRITICAL STRUCTURE RULES:
+1. TOP-LEVEL actions (in ""script"" array): ONLY spawn_projectile, spawn_area, spawn_beam, spawn_melee, chain_to_nearby, or repeat
+2. ALL spawn_* actions MUST have ""on_hit"" array with actions inside (damage, apply_status, heal, knockback)
+3. NEVER put damage/apply_status/heal/knockback at top level - they go INSIDE on_hit arrays
+4. Effects array must have at least 1 effect with a non-empty script array
+
+CONCRETE EXAMPLES - Study these and output the same structure:
+
+EXAMPLE 1 - Melee (Fire + Shadow):
 {{
-  ""name"": ""Creative Element Name"",
-  ""description"": ""1-2 sentences describing this element"",
-  ""color"": ""#HEXCODE"",
+  ""name"": ""Shadowflame Reaper"",
+  ""description"": ""A dark flame scythe that cleaves through enemies in a wide arc."",
+  ""color"": ""#8B0000"",
   ""ability"": {{
-  ""description"": ""What this ability does"",
-  ""primitives"": [""{element1.ToLower()}"", ""{element2.ToLower()}""],
+    ""description"": ""Swing a scythe of dark flames in a 160° arc"",
+    ""primitives"": [""fire"", ""shadow""],
+    ""effects"": [
+      {{
+        ""script"": [
+          {{
+            ""action"": ""spawn_melee"",
+            ""args"": {{""shape"": ""arc"", ""range"": 2.5, ""arc_angle"": 160}},
+            ""on_hit"": [
+              {{""action"": ""damage"", ""args"": {{""amount"": 35, ""element"": ""fire""}}}},
+              {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 5}}}}
+            ]
+          }}
+        ]
+      }}
+    ],
+    ""cooldown"": 2.0
+  }}
+}}
+
+EXAMPLE 2 - Projectiles (Water + Lightning):
+{{
+  ""name"": ""Stormwave"",
+  ""description"": ""Electrified water bolts that spread and chain to enemies."",
+  ""color"": ""#1E90FF"",
+  ""ability"": {{
+    ""description"": ""Fire 3 electrified bolts that shock and chain"",
+    ""primitives"": [""water"", ""lightning""],
     ""effects"": [
       {{
         ""script"": [
           {{
             ""action"": ""spawn_projectile"",
-            ""args"": {{""count"": 1, ""speed"": 400}},
+            ""args"": {{""count"": 3, ""speed"": 600, ""pattern"": ""spread""}},
             ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 25}}}}
+              {{""action"": ""damage"", ""args"": {{""amount"": 20}}}},
+              {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 4}}}},
+              {{
+                ""action"": ""chain_to_nearby"",
+                ""args"": {{""max_chains"": 3, ""range"": 200}},
+                ""on_hit"": [{{""action"": ""damage"", ""args"": {{""amount"": 15}}}}]
+              }}
             ]
           }}
         ]
@@ -539,8 +333,63 @@ RETURN JSON FORMAT:
   }}
 }}
 
-IMPORTANT: Only use the supported actions listed above! Be creative with combinations and values!
-Be CREATIVE with the element name! Make it interesting and unique!";
+EXAMPLE 3 - Area (Earth + Poison):
+{{
+  ""name"": ""Toxic Swamp"",
+  ""description"": ""A growing pool of poisonous mud that slows enemies."",
+  ""color"": ""#556B2F"",
+  ""ability"": {{
+    ""description"": ""Create a toxic swamp that grows and poisons"",
+    ""primitives"": [""earth"", ""poison""],
+    ""effects"": [
+      {{
+        ""script"": [
+          {{
+            ""action"": ""spawn_area"",
+            ""args"": {{""radius"": 150, ""duration"": 6, ""lingering_damage"": 8, ""growth_time"": 1.5}},
+            ""on_hit"": [
+              {{""action"": ""apply_status"", ""args"": {{""status"": ""poisoned"", ""duration"": 6}}}},
+              {{""action"": ""apply_status"", ""args"": {{""status"": ""slowed"", ""duration"": 4}}}}
+            ]
+          }}
+        ]
+      }}
+    ],
+    ""cooldown"": 2.5
+  }}
+}}
+
+EXAMPLE 4 - Beam (Light + Lightning):
+{{
+  ""name"": ""Divine Lance"",
+  ""description"": ""A piercing beam of holy lightning that travels slowly and pushes enemies back."",
+  ""color"": ""#FFD700"",
+  ""ability"": {{
+    ""description"": ""Fire a piercing beam of light that deals damage, shocks, and knocks back"",
+    ""primitives"": [""light"", ""lightning""],
+    ""effects"": [
+      {{
+        ""script"": [
+          {{
+            ""action"": ""spawn_beam"",
+            ""args"": {{""length"": 600, ""width"": 30, ""duration"": 1.5, ""travel_time"": 0.8}},
+            ""on_hit"": [
+              {{""action"": ""damage"", ""args"": {{""amount"": 28, ""element"": ""lightning""}}}},
+              {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 3}}}},
+              {{""action"": ""knockback"", ""args"": {{""force"": 400, ""direction"": ""away""}}}}
+            ]
+          }}
+        ]
+      }}
+    ],
+    ""cooldown"": 2.0
+  }}
+}}
+
+NOW CREATE YOUR ELEMENT using primitives [""{element1.ToLower()}"", ""{element2.ToLower()}""]:
+
+REMEMBER: Make it INTERESTING! Include status effects, area damage, chains, knockback, beams, or other mechanics!
+Be CREATIVE with the element name and make sure the ability matches the element's theme!";
     }
 
     private AbilityV2 CreateFallbackAbilityForElement(string elementName)
@@ -584,49 +433,6 @@ Be CREATIVE with the element name! Make it interesting and unique!";
         };
     }
 
-    private AbilityV2 CreateFallbackAbility(string[] primitives)
-    {
-        var primitivesStr = string.Join(" ", primitives);
-
-        return new AbilityV2
-        {
-            Description = $"A basic ability combining {primitivesStr}",
-            Primitives = new List<string>(primitives.Select(p => p.ToLower())),
-            Effects = new List<EffectScript>
-            {
-                new EffectScript
-                {
-                    Script = new List<EffectAction>
-                    {
-                        new EffectAction
-                        {
-                            Action = "spawn_projectile",
-                            Args = new Dictionary<string, object>
-                            {
-                                { "count", 1 },
-                                { "speed", 400 }
-                            },
-                            OnHit = new List<EffectAction>
-                            {
-                                new EffectAction
-                                {
-                                    Action = "damage",
-                                    Args = new Dictionary<string, object>
-                                    {
-                                        { "amount", 20 },
-                                        { "element", primitives.Length > 0 ? primitives[0] : "neutral" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            Cooldown = 1.0f,
-            Version = 2,
-            GeneratedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-        };
-    }
 }
 
 /// <summary>

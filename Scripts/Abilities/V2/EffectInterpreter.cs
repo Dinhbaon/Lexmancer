@@ -64,6 +64,10 @@ public class EffectInterpreter
                 SpawnBeam(action.Args, context, action.OnHit);
                 break;
 
+            case "spawn_melee":
+                SpawnMelee(action.Args, context, action.OnHit);
+                break;
+
             case "damage":
                 ApplyDamage(action.Args, context);
                 break;
@@ -108,7 +112,7 @@ public class EffectInterpreter
                 // LLM may generate creative actions that aren't implemented yet
                 // Log as warning but don't error - just skip the action
                 GD.Print($"⚠️  Skipping unsupported action: '{action.Action}' (not yet implemented)");
-                GD.Print($"    Supported actions: spawn_projectile, spawn_area, spawn_beam, damage, heal, apply_status, knockback, chain_to_nearby, repeat");
+                GD.Print($"    Supported actions: spawn_projectile, spawn_area, spawn_beam, spawn_melee, damage, heal, apply_status, knockback, chain_to_nearby, repeat");
                 break;
         }
     }
@@ -117,19 +121,27 @@ public class EffectInterpreter
 
     private void SpawnProjectile(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onHit)
     {
+        GD.Print($"[SpawnProjectile] Starting...");
+        GD.Print($"   Position: {ctx.Position}, Direction: {ctx.Direction}");
+
         int count = GetArg(args, "count", 1);
         string pattern = GetArg(args, "pattern", "single");
         float speed = GetArg(args, "speed", 400f);
         float acceleration = GetArg(args, "acceleration", 0f);
+
+        GD.Print($"   Args: count={count}, pattern={pattern}, speed={speed}, accel={acceleration}");
 
         // Clamp values
         count = Math.Clamp(count, 1, 5);
         speed = Math.Clamp(speed, 50f, 1200f);
         acceleration = Math.Clamp(acceleration, -500f, 500f);
 
+        GD.Print($"   OnHit actions: {onHit?.Count ?? 0}");
+
         for (int i = 0; i < count; i++)
         {
             Vector2 direction = CalculateDirection(pattern, i, count, ctx.Direction);
+            GD.Print($"   Projectile #{i+1} direction: {direction}");
 
             // Create actual projectile node
             var projectile = new Abilities.Execution.ProjectileNodeV2();
@@ -140,10 +152,13 @@ public class EffectInterpreter
             projectile.OnHitActions = onHit;
             projectile.Context = ctx;
 
+            GD.Print($"   Created ProjectileNodeV2 at {ctx.Position}");
+
             worldNode.AddChild(projectile);
+            GD.Print($"   ✓ Added projectile to worldNode ({worldNode.Name})");
 
             string accelInfo = acceleration != 0 ? $" (accel: {acceleration})" : "";
-            GD.Print($"Spawned projectile #{i+1}/{count} at speed {speed}{accelInfo}");
+            GD.Print($"✓ Spawned projectile #{i+1}/{count} at speed {speed}{accelInfo}");
         }
     }
 
@@ -216,6 +231,40 @@ public class EffectInterpreter
 
         string travelInfo = travelTime > 0 ? $", travel={travelTime}s" : " (instant)";
         GD.Print($"Spawned beam: length={length}, width={width}, duration={duration}{travelInfo}");
+    }
+
+    private void SpawnMelee(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onHit)
+    {
+        string shape = GetArg(args, "shape", "arc");
+        float range = GetArg(args, "range", 1.5f);
+        float arcAngle = GetArg(args, "arc_angle", 120f);
+        float width = GetArg(args, "width", 0.5f);
+        float windupTime = GetArg(args, "windup_time", 0.05f);
+        float activeTime = GetArg(args, "active_time", 0.2f);
+
+        // Clamp values
+        range = Math.Clamp(range, 0.5f, 3f);
+        arcAngle = Math.Clamp(arcAngle, 30f, 360f);
+        width = Math.Clamp(width, 0.2f, 2f);
+        windupTime = Math.Clamp(windupTime, 0f, 0.3f);
+        activeTime = Math.Clamp(activeTime, 0.1f, 0.5f);
+
+        // Create melee attack node
+        var melee = new Execution.MeleeAttackNode();
+        melee.GlobalPosition = ctx.Position;
+        melee.Direction = ctx.Direction;
+        melee.Shape = shape;
+        melee.Range = range;
+        melee.ArcAngle = arcAngle;
+        melee.Width = width;
+        melee.WindupTime = windupTime;
+        melee.ActiveTime = activeTime;
+        melee.OnHitActions = onHit;
+        melee.Context = ctx;
+
+        worldNode.AddChild(melee);
+
+        GD.Print($"Spawned melee: shape={shape}, range={range} tiles, arc={arcAngle}°, windup={windupTime}s, active={activeTime}s");
     }
 
     // ==================== DAMAGE ACTIONS ====================

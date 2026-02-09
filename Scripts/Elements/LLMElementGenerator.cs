@@ -14,7 +14,6 @@ namespace Lexmancer.Elements;
 /// </summary>
 public class LLMElementGenerator
 {
-	private readonly AbilityGeneratorV2 abilityGenerator;
 	private readonly bool useLLM;
 	private readonly LLMClientV2 llmClient;
 
@@ -28,7 +27,6 @@ public class LLMElementGenerator
 
 		if (useLLM)
 		{
-			abilityGenerator = new AbilityGeneratorV2(playerId, llmBaseUrl, llmModel);
 			llmClient = new LLMClientV2(llmBaseUrl, llmModel);
 			GD.Print($"LLMElementGenerator initialized with LLM enabled ({llmModel})");
 		}
@@ -36,6 +34,34 @@ public class LLMElementGenerator
 		{
 			GD.Print("LLMElementGenerator initialized with LLM disabled (using fallbacks)");
 		}
+	}
+
+	/// <summary>
+	/// Check if a combination has been generated before (cached in ElementRegistry)
+	/// Returns the cached element if found, otherwise null
+	/// </summary>
+	public Element GetCachedCombination(string element1Id, string element2Id)
+	{
+		// Check ElementRegistry for all previously generated combinations
+		var allElements = ElementRegistry.GetAllElements();
+
+		foreach (var element in allElements)
+		{
+			// Check if this element was created from these two ingredients (in either order)
+			if (element.Recipe != null && element.Recipe.Count == 2)
+			{
+				bool isMatch = (element.Recipe[0] == element1Id && element.Recipe[1] == element2Id) ||
+				               (element.Recipe[0] == element2Id && element.Recipe[1] == element1Id);
+
+				if (isMatch)
+				{
+					GD.Print($"Found cached combination: {element.Name}");
+					return element;
+				}
+			}
+		}
+
+		return null;
 	}
 
 	/// <summary>
@@ -78,142 +104,6 @@ public class LLMElementGenerator
 			GD.PrintErr($"Failed to generate element combination: {ex.Message}");
 			return null;
 		}
-	}
-
-	/// <summary>
-	/// Generate or retrieve an ability for an element
-	/// </summary>
-	public async Task<AbilityV2> GenerateAbilityForElementAsync(Element element, bool forceNew = false)
-	{
-		if (!useLLM)
-		{
-			// Fallback to hardcoded abilities
-			return GetFallbackAbility(element);
-		}
-
-		// Convert element to primitives
-		var primitives = GetPrimitivesForElement(element);
-
-		if (primitives.Count == 0)
-		{
-			GD.PrintErr($"No primitives mapped for element: {element.Name}");
-			return GetFallbackAbility(element);
-		}
-
-		try
-		{
-			GD.Print($"Generating LLM ability for {element.Name} ({string.Join("+", primitives)})");
-
-			// Generate using LLM
-			var result = await abilityGenerator.GenerateAbilityAsync(primitives, forceNew);
-
-			if (result.WasCached)
-			{
-				GD.Print("✓ Using cached ability");
-			}
-			else
-			{
-				GD.Print("✨ Generated NEW ability");
-			}
-
-			// Customize description with element flavor
-			result.Ability.Description = CustomizeDescription(element, result.Ability.Description);
-
-			return result.Ability;
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"LLM generation failed for {element.Name}: {ex.Message}");
-			return GetFallbackAbility(element);
-		}
-	}
-
-	/// <summary>
-	/// Get primitives for an element based on its recipe
-	/// </summary>
-	private List<PrimitiveType> GetPrimitivesForElement(Element element)
-	{
-		var primitives = new List<PrimitiveType>();
-
-		if (element.Recipe == null || element.Recipe.Count == 0)
-		{
-			// Base element - use primitive directly
-			if (element.Primitive.HasValue)
-			{
-				primitives.Add(element.Primitive.Value);
-			}
-		}
-		else
-		{
-			// Combined element - look up recipe ingredients and get their primitives
-			foreach (var ingredientId in element.Recipe)
-			{
-				var ingredient = ElementDefinitions.BaseElements.GetValueOrDefault(ingredientId);
-				if (ingredient?.Primitive != null)
-				{
-					primitives.Add(ingredient.Primitive.Value);
-				}
-			}
-		}
-
-		return primitives;
-	}
-
-	/// <summary>
-	/// Customize description with element context
-	/// </summary>
-	private string CustomizeDescription(Element element, string llmDescription)
-	{
-		// Add element context if not already present
-		if (llmDescription.ToLower().Contains(element.Name.ToLower()))
-			return llmDescription;
-
-		return $"[{element.Name}] {llmDescription}";
-	}
-
-	/// <summary>
-	/// Get fallback ability when LLM is disabled or fails
-	/// Uses the hardcoded abilities from ElementDefinitions
-	/// </summary>
-	private AbilityV2 GetFallbackAbility(Element element)
-	{
-		// Try to get from ElementDefinitions (use ID to look up)
-		if (ElementDefinitions.BaseElements.TryGetValue(element.Id, out var baseElement))
-		{
-			return baseElement.Ability;
-		}
-
-		// Last resort: create a basic projectile ability
-		GD.PrintErr($"No fallback ability found for {element.Name}, creating basic projectile");
-
-		return new AbilityV2
-		{
-			Description = $"A basic {element.Name} projectile",
-			Primitives = new() { element.Name },
-			Cooldown = 1.0f,
-			Effects = new()
-			{
-				new EffectScript
-				{
-					Script = new()
-					{
-						new EffectAction
-						{
-							Action = "spawn_projectile",
-							Args = new() { ["count"] = 1, ["speed"] = 400 },
-							OnHit = new()
-							{
-								new EffectAction
-								{
-									Action = "damage",
-									Args = new() { ["amount"] = 20, ["element"] = element.Name }
-								}
-							}
-						}
-					}
-				}
-			}
-		};
 	}
 
 	/// <summary>
@@ -284,10 +174,5 @@ Generate the element with these properties:
 4. An ability (using the effect scripting system)
 
 Return as JSON.";
-	}
-
-	public void Dispose()
-	{
-		abilityGenerator?.Dispose();
 	}
 }

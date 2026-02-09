@@ -182,7 +182,13 @@ public partial class ElementHotbar : Control
 
 		if (element?.Ability == null)
 		{
-			GD.PrintErr($"Element {elementId} has no ability");
+			GD.PrintErr($"❌ Element {elementId} has no ability!");
+			GD.PrintErr($"   Element: {element}");
+			GD.PrintErr($"   AbilityJson length: {element?.AbilityJson?.Length ?? 0}");
+			if (!string.IsNullOrEmpty(element?.AbilityJson))
+			{
+				GD.PrintErr($"   First 200 chars: {element.AbilityJson.Substring(0, Math.Min(200, element.AbilityJson.Length))}");
+			}
 			return;
 		}
 
@@ -214,13 +220,16 @@ public partial class ElementHotbar : Control
 			direction = Vector2.Right;
 
 		// Cast ability (no element consumption - unlimited casts!)
-		GD.Print($"Using {element.Name} ability");
+		GD.Print($"✨ Using {element.Name} ability");
+		GD.Print($"   Ability description: {element.Ability.Description}");
+		GD.Print($"   Effects count: {element.Ability.Effects?.Count ?? 0}");
 		element.Ability.Execute(
 			playerPos,
 			direction,
 			player,
 			worldNode
 		);
+		GD.Print($"✓ Ability.Execute() completed");
 
 		// NOTE: Elements are no longer consumed on cast - only on combine!
 	}

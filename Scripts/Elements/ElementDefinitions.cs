@@ -229,15 +229,15 @@ public static class ElementDefinitions
 	}
 
 	/// <summary>
-	/// Earth - Rock Throw: Slow heavy projectile with deceleration, 30 damage + stun
+	/// Earth - Ground Slam: Circular melee attack around player, 30 damage + stun
 	/// </summary>
 	private static AbilityV2 CreateRockThrowAbility()
 	{
 		return new AbilityV2
 		{
-			Description = "Hurls a heavy rock that stuns enemies",
+			Description = "Slams the ground, damaging nearby enemies in a circle",
 			Primitives = new() { "earth" },
-			Cooldown = 1.0f,
+			Cooldown = 1.2f,
 			Effects = new()
 			{
 				new EffectScript
@@ -246,13 +246,13 @@ public static class ElementDefinitions
 					{
 						new EffectAction
 						{
-							Action = "spawn_projectile",
+							Action = "spawn_melee",
 							Args = new()
 							{
-								["count"] = 1,
-								["speed"] = 350,
-								["acceleration"] = -150, // Slows down over time (heavy)
-								["pattern"] = "single"
+								["shape"] = "circle",
+								["range"] = 2.0, // 2 tiles radius
+								["windup_time"] = 0.1,
+								["active_time"] = 0.3
 							},
 							OnHit = new()
 							{
@@ -339,15 +339,15 @@ public static class ElementDefinitions
 	}
 
 	/// <summary>
-	/// Poison - Poison Dart: Medium projectile, 10 damage + poison status (DoT)
+	/// Poison - Poison Stab: Thrust melee attack, 15 damage + poison status (DoT)
 	/// </summary>
 	private static AbilityV2 CreatePoisonDartAbility()
 	{
 		return new AbilityV2
 		{
-			Description = "Toxic projectile that poisons enemies over time",
+			Description = "Thrust forward with toxic energy that poisons enemies",
 			Primitives = new() { "poison" },
-			Cooldown = 0.8f,
+			Cooldown = 0.7f,
 			Effects = new()
 			{
 				new EffectScript
@@ -356,12 +356,14 @@ public static class ElementDefinitions
 					{
 						new EffectAction
 						{
-							Action = "spawn_projectile",
+							Action = "spawn_melee",
 							Args = new()
 							{
-								["count"] = 1,
-								["speed"] = 350,
-								["pattern"] = "single"
+								["shape"] = "rectangle",
+								["range"] = 2.2, // Long thrust
+								["width"] = 0.4, // Narrow
+								["windup_time"] = 0.06,
+								["active_time"] = 0.18
 							},
 							OnHit = new()
 							{
@@ -370,7 +372,7 @@ public static class ElementDefinitions
 									Action = "damage",
 									Args = new()
 									{
-										["amount"] = 10,
+										["amount"] = 15,
 										["element"] = "poison"
 									}
 								},
@@ -393,15 +395,15 @@ public static class ElementDefinitions
 	}
 
 	/// <summary>
-	/// Wind - Wind Gust: 3 fast projectiles in spread, 12 damage each
+	/// Wind - Wind Slash: Arc melee attack in front of player, 18 damage
 	/// </summary>
 	private static AbilityV2 CreateWindGustAbility()
 	{
 		return new AbilityV2
 		{
-			Description = "Bursts of swift wind projectiles",
+			Description = "Slashes the air in a sharp arc",
 			Primitives = new() { "wind" },
-			Cooldown = 0.7f,
+			Cooldown = 0.6f,
 			Effects = new()
 			{
 				new EffectScript
@@ -410,13 +412,14 @@ public static class ElementDefinitions
 					{
 						new EffectAction
 						{
-							Action = "spawn_projectile",
+							Action = "spawn_melee",
 							Args = new()
 							{
-								["count"] = 3,
-								["speed"] = 500,
-								["pattern"] = "spread",
-								["spread_angle"] = 30
+								["shape"] = "arc",
+								["range"] = 2.0,
+								["arc_angle"] = 90, // 90° arc
+								["windup_time"] = 0.05, // Quick slash
+								["active_time"] = 0.15
 							},
 							OnHit = new()
 							{
@@ -425,7 +428,7 @@ public static class ElementDefinitions
 									Action = "damage",
 									Args = new()
 									{
-										["amount"] = 12,
+										["amount"] = 18,
 										["element"] = "wind"
 									}
 								}
@@ -438,15 +441,15 @@ public static class ElementDefinitions
 	}
 
 	/// <summary>
-	/// Shadow - Shadow Drain: Growing area effect, 8 damage/s
+	/// Shadow - Reap: Wide arc melee attack, 22 damage
 	/// </summary>
 	private static AbilityV2 CreateShadowDrainAbility()
 	{
 		return new AbilityV2
 		{
-			Description = "Drains life from enemies in an area",
+			Description = "Sweeps darkness in a wide arc",
 			Primitives = new() { "shadow" },
-			Cooldown = 1.0f,
+			Cooldown = 0.8f,
 			Effects = new()
 			{
 				new EffectScript
@@ -455,16 +458,28 @@ public static class ElementDefinitions
 					{
 						new EffectAction
 						{
-							Action = "spawn_area",
+							Action = "spawn_melee",
 							Args = new()
 							{
-								["radius"] = 120,
-								["duration"] = 2.0,
-								["lingering_damage"] = 8,
-								["growth_time"] = 0.8 // Spreads from center
+								["shape"] = "arc",
+								["range"] = 2.5, // Longer reach
+								["arc_angle"] = 160, // Very wide arc
+								["windup_time"] = 0.08,
+								["active_time"] = 0.25
+							},
+							OnHit = new()
+							{
+								new EffectAction
+								{
+									Action = "damage",
+									Args = new()
+									{
+										["amount"] = 22,
+										["element"] = "shadow"
+									}
+								}
 							}
 						}
-						// TODO: Add life drain effect when implemented
 					}
 				}
 			}

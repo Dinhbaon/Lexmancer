@@ -26,12 +26,19 @@ public partial class ProjectileNodeV2 : Area2D
 
     public override void _Ready()
     {
+        GD.Print($"[ProjectileNodeV2._Ready] Starting initialization");
+        GD.Print($"   GlobalPosition: {GlobalPosition}");
+        GD.Print($"   Direction: {Direction}");
+        GD.Print($"   Speed: {Speed}");
+
         // Initialize speed
         currentSpeed = Speed;
 
         // Determine element color from context
         var elementColor = GetElementColor();
         var projectileSize = 12f;
+
+        GD.Print($"   Element color: {elementColor}");
 
         // Create colored visual
         var visual = VisualSystem.CreateProjectileVisual(elementColor, projectileSize);

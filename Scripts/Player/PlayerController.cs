@@ -1,7 +1,8 @@
 using Godot;
 using System;
+using Lexmancer.Core;
 
-public partial class PlayerController : Node
+public partial class PlayerController : Node, IMoveable
 {
     [Export] public float Speed = 300.0f;
     [Export] public float DashSpeed = 600.0f;
@@ -12,10 +13,12 @@ public partial class PlayerController : Node
     private bool canDash = true;
     private float dashCooldown = 0;
     private const float DashCooldownTime = 1.0f;
+    private float currentMoveSpeed; // Tracks current speed (normal or dash)
 
     public override void _Ready()
     {
         body = GetParent<CharacterBody2D>();
+        currentMoveSpeed = Speed; // Initialize to normal speed
     }
 
     public override void _Process(double delta)
@@ -26,36 +29,23 @@ public partial class PlayerController : Node
 
     private void HandleMovement(double delta)
     {
-        // Check for movement-impairing status effects
-        var statusManager = Lexmancer.Abilities.Execution.StatusEffectManager.Instance;
-        if (statusManager != null)
-        {
-            // Stunned or frozen - cannot move at all
-            if (statusManager.HasStatus(body, "stunned") || statusManager.HasStatus(body, "frozen"))
-            {
-                body.Velocity = Vector2.Zero;
-                body.MoveAndSlide();
-                return;
-            }
-        }
-
-        Vector2 velocity = Vector2.Zero;
+        Vector2 inputDirection = Vector2.Zero;
 
         // Get input direction
         if (Input.IsActionPressed("ui_right") || Input.IsKeyPressed(Key.D))
-            velocity.X += 1;
+            inputDirection.X += 1;
         if (Input.IsActionPressed("ui_left") || Input.IsKeyPressed(Key.A))
-            velocity.X -= 1;
+            inputDirection.X -= 1;
         if (Input.IsActionPressed("ui_down") || Input.IsKeyPressed(Key.S))
-            velocity.Y += 1;
+            inputDirection.Y += 1;
         if (Input.IsActionPressed("ui_up") || Input.IsKeyPressed(Key.W))
-            velocity.Y -= 1;
+            inputDirection.Y -= 1;
 
         // Normalize diagonal movement
-        velocity = velocity.Normalized();
+        inputDirection = inputDirection.Normalized();
 
         // Handle dash
-        if (Input.IsKeyPressed(Key.Space) && canDash && velocity.Length() > 0)
+        if (Input.IsKeyPressed(Key.Space) && canDash && inputDirection.Length() > 0)
         {
             dashTimeRemaining = DashDuration;
             canDash = false;
@@ -63,24 +53,37 @@ public partial class PlayerController : Node
             GD.Print("Dash!");
         }
 
-        // Apply speed with status effect modifiers
-        float currentSpeed = Speed;
-
-        // Apply status effect movement modifiers
-        float speedMultiplier = 1.0f;
-        if (statusManager != null && statusManager.HasStatus(body, "slowed"))
-        {
-            speedMultiplier *= 0.5f;
-        }
-
+        // Update current speed (dash or normal)
         if (dashTimeRemaining > 0)
         {
-            currentSpeed = DashSpeed;
+            currentMoveSpeed = DashSpeed;
             dashTimeRemaining -= (float)delta;
         }
+        else
+        {
+            currentMoveSpeed = Speed;
+        }
 
-        velocity *= currentSpeed * speedMultiplier;
-        body.Velocity = velocity;
+        // If no input, just stop moving
+        if (inputDirection.Length() == 0)
+        {
+            body.Velocity = Vector2.Zero;
+            body.MoveAndSlide();
+            return;
+        }
+
+        // Let StatusEffectManager handle all movement-based status effects
+        var statusManager = Lexmancer.Abilities.Execution.StatusEffectManager.Instance;
+        if (statusManager != null)
+        {
+            statusManager.ApplyMovementEffects(this, inputDirection);
+        }
+        else
+        {
+            // Fallback if status manager not ready
+            body.Velocity = inputDirection * currentMoveSpeed;
+        }
+
         body.MoveAndSlide();
     }
 
@@ -93,4 +96,8 @@ public partial class PlayerController : Node
                 canDash = true;
         }
     }
+
+    // IMoveable interface implementation
+    public CharacterBody2D GetBody() => body;
+    public float GetBaseMoveSpeed() => currentMoveSpeed;
 }
