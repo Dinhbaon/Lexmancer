@@ -2,7 +2,9 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Lexmancer.Abilities.Execution;
+using Lexmancer.Abilities.Visuals;
 
 namespace Lexmancer.Abilities.V2;
 
@@ -241,6 +243,10 @@ public class EffectInterpreter
         float width = GetArg(args, "width", 0.5f);
         float windupTime = GetArg(args, "windup_time", 0.05f);
         float activeTime = GetArg(args, "active_time", 0.2f);
+        string movement = GetArg(args, "movement", "stationary");
+        movement = movement?.ToLowerInvariant() ?? "stationary";
+        float moveDistance = GetArg(args, "move_distance", 0f);
+        float moveDuration = GetArg(args, "move_duration", 0f);
 
         // Clamp values
         range = Math.Clamp(range, 0.5f, 3f);
@@ -248,6 +254,9 @@ public class EffectInterpreter
         width = Math.Clamp(width, 0.2f, 2f);
         windupTime = Math.Clamp(windupTime, 0f, 0.3f);
         activeTime = Math.Clamp(activeTime, 0.1f, 0.5f);
+        ApplyMeleeMovementDefaults(movement, ref moveDistance, ref moveDuration);
+        moveDistance = Math.Clamp(moveDistance, 0f, 4f);
+        moveDuration = Math.Clamp(moveDuration, 0f, 0.6f);
 
         // Create melee attack node
         var melee = new Execution.MeleeAttackNode();
@@ -259,12 +268,19 @@ public class EffectInterpreter
         melee.Width = width;
         melee.WindupTime = windupTime;
         melee.ActiveTime = activeTime;
+        melee.MovementType = movement;
+        melee.MoveDistance = moveDistance;
+        melee.MoveDuration = moveDuration;
         melee.OnHitActions = onHit;
         melee.Context = ctx;
+        melee.Caster = ctx.Caster;
 
         worldNode.AddChild(melee);
 
-        GD.Print($"Spawned melee: shape={shape}, range={range} tiles, arc={arcAngle}°, windup={windupTime}s, active={activeTime}s");
+        var moveInfo = movement?.ToLower() == "stationary"
+            ? "stationary"
+            : $"{movement} {moveDistance:0.##} tiles / {moveDuration:0.##}s";
+        GD.Print($"Spawned melee: shape={shape}, range={range} tiles, arc={arcAngle}°, windup={windupTime}s, active={activeTime}s, move={moveInfo}");
     }
 
     // ==================== DAMAGE ACTIONS ====================
@@ -283,7 +299,9 @@ public class EffectInterpreter
                 {
                     float damage = EvaluateDamageFormula(args, ctx);
                     string element = GetArg(args, "element", "neutral");
+                    GD.Print($"[DEBUG] Raw damage from formula: {damage}");
                     damage = Math.Clamp(damage, 1f, 100f);
+                    GD.Print($"[DEBUG] Clamped damage: {damage}");
 
                     Combat.DamageSystem.ApplyDamage(enemy, damage, element, ctx.Caster);
                 }
@@ -300,8 +318,12 @@ public class EffectInterpreter
         float finalDamage = EvaluateDamageFormula(args, ctx);
         string damageElement = GetArg(args, "element", "neutral");
 
+        GD.Print($"[DEBUG] Raw damage from formula: {finalDamage}");
+        GD.Print($"[DEBUG] Args contents: {System.Text.Json.JsonSerializer.Serialize(args)}");
+
         // Clamp damage
         finalDamage = Math.Clamp(finalDamage, 1f, 100f);
+        GD.Print($"[DEBUG] Final clamped damage: {finalDamage}");
 
         // Apply damage to target
         Combat.DamageSystem.ApplyDamage(ctx.Target, finalDamage, damageElement, ctx.Caster);
@@ -361,15 +383,20 @@ public class EffectInterpreter
 
         GD.Print($"Chaining to {nearbyEnemies.Count} enemies within {range}px");
 
+        // Determine chain visual color
+        var chainColor = GetChainColor(chainedActions, ctx);
+
         // Execute chained actions on each enemy
         foreach (var enemy in nearbyEnemies)
         {
             // Cast to Node2D if needed for position
-            var enemyPos = enemy is Node2D enemy2D ? enemy2D.Position : Vector2.Zero;
+            var enemyPos = enemy is Node2D enemy2D ? enemy2D.GlobalPosition : Vector2.Zero;
             var chainCtx = ctx.With(
                 position: enemyPos,
                 target: enemy
             );
+
+            SpawnChainVisual(ctx.Position, enemyPos, chainColor);
 
             foreach (var action in chainedActions)
             {
@@ -400,6 +427,8 @@ public class EffectInterpreter
         {
             "away" => (targetPos - casterPos).Normalized(),
             "towards" => (casterPos - targetPos).Normalized(),
+            // Use the effect context position as the pull center (area center)
+            "towards_center" => (ctx.Position - targetPos).Normalized(),
             "up" => Vector2.Up,
             _ => Vector2.Zero
         };
@@ -428,6 +457,13 @@ public class EffectInterpreter
         amount = Math.Clamp(amount, 10, 50);
 
         var healTarget = ctx.Target ?? ctx.Caster;
+        if (!IsHealAllowed(ctx.Caster, healTarget))
+        {
+            var casterName = ctx.Caster?.Name ?? "null";
+            var targetName = healTarget?.Name ?? "null";
+            GD.Print($"Blocked heal: caster={casterName}, target={targetName} (not self/ally)");
+            return;
+        }
 
         // Apply healing
         Combat.DamageSystem.ApplyHealing(healTarget, amount);
@@ -459,6 +495,32 @@ public class EffectInterpreter
 
     // ==================== HELPER METHODS ====================
 
+    private static bool IsHealAllowed(Node caster, Node target)
+    {
+        if (target == null)
+            return false;
+
+        if (caster == null)
+        {
+            // Without a caster, only allow healing the player side.
+            return target.IsInGroup("player") && !target.IsInGroup("enemies");
+        }
+
+        if (ReferenceEquals(caster, target))
+            return true;
+
+        bool casterIsPlayer = caster.IsInGroup("player");
+        bool casterIsEnemy = caster.IsInGroup("enemies");
+        bool targetIsPlayer = target.IsInGroup("player");
+        bool targetIsEnemy = target.IsInGroup("enemies");
+
+        // If neither has a faction, be conservative and block.
+        if (!casterIsPlayer && !casterIsEnemy)
+            return false;
+
+        return (casterIsPlayer && targetIsPlayer) || (casterIsEnemy && targetIsEnemy);
+    }
+
     private float EvaluateDamageFormula(Dictionary<string, object> args, EffectContext ctx)
     {
         // If formula is specified, evaluate it
@@ -469,7 +531,9 @@ public class EffectInterpreter
         }
 
         // Otherwise use amount
-        return GetArg(args, "amount", 20f);
+        float amount = GetArg(args, "amount", 20f);
+        GD.Print($"[DEBUG] GetArg returned damage amount: {amount}");
+        return amount;
     }
 
     private float EvaluateFormula(string formula, EffectContext ctx)
@@ -491,20 +555,81 @@ public class EffectInterpreter
 
     private T GetArg<T>(Dictionary<string, object> args, string key, T defaultValue)
     {
-        if (args.TryGetValue(key, out var value))
+        if (args != null && args.TryGetValue(key, out var value))
         {
             try
             {
+                if (value is JsonElement jsonValue)
+                {
+                    return ConvertJsonElement(jsonValue, defaultValue);
+                }
+
                 if (value is T typedValue)
                     return typedValue;
 
+                // Special handling for numeric conversions (double → float, double → int)
+                if (typeof(T) == typeof(float) && value is double doubleVal)
+                    return (T)(object)(float)doubleVal;
+
+                if (typeof(T) == typeof(int) && value is double doubleIntVal)
+                    return (T)(object)(int)doubleIntVal;
+
                 return (T)Convert.ChangeType(value, typeof(T));
             }
-            catch
+            catch (Exception ex)
             {
+                GD.PrintErr($"[GetArg] Failed to convert '{key}' value '{value}' (type: {value?.GetType().Name}) to {typeof(T).Name}: {ex.Message}");
                 return defaultValue;
             }
         }
+        return defaultValue;
+    }
+
+    private T ConvertJsonElement<T>(JsonElement element, T defaultValue)
+    {
+        try
+        {
+            if (typeof(T) == typeof(string))
+            {
+                var str = element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString();
+                return (T)(object)(str ?? "");
+            }
+
+            if (typeof(T) == typeof(int))
+            {
+                if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var i))
+                    return (T)(object)i;
+            }
+
+            if (typeof(T) == typeof(long))
+            {
+                if (element.ValueKind == JsonValueKind.Number && element.TryGetInt64(out var l))
+                    return (T)(object)l;
+            }
+
+            if (typeof(T) == typeof(float))
+            {
+                if (element.ValueKind == JsonValueKind.Number)
+                    return (T)(object)(float)element.GetDouble();
+            }
+
+            if (typeof(T) == typeof(double))
+            {
+                if (element.ValueKind == JsonValueKind.Number)
+                    return (T)(object)element.GetDouble();
+            }
+
+            if (typeof(T) == typeof(bool))
+            {
+                if (element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False)
+                    return (T)(object)element.GetBoolean();
+            }
+        }
+        catch
+        {
+            // Fall through to default value
+        }
+
         return defaultValue;
     }
 
@@ -517,6 +642,45 @@ public class EffectInterpreter
             "circle" => Vector2.Right.Rotated(index * Mathf.Tau / total),
             _ => baseDirection
         };
+    }
+
+    private void ApplyMeleeMovementDefaults(string movement, ref float distance, ref float duration)
+    {
+        var move = (movement ?? "stationary").ToLowerInvariant();
+        if (move == "stationary")
+        {
+            distance = 0f;
+            duration = 0f;
+            return;
+        }
+
+        if (distance <= 0f)
+        {
+            distance = move switch
+            {
+                "dash" => 2.0f,
+                "lunge" => 1.0f,
+                "jump_smash" => 1.5f,
+                "backstep" => 1.0f,
+                "blink" => 2.0f,
+                "teleport_strike" => 2.5f,
+                _ => 0f
+            };
+        }
+
+        if (duration <= 0f)
+        {
+            duration = move switch
+            {
+                "dash" => 0.15f,
+                "lunge" => 0.1f,
+                "jump_smash" => 0.25f,
+                "backstep" => 0.12f,
+                "blink" => 0.05f,
+                "teleport_strike" => 0.08f,
+                _ => 0f
+            };
+        }
     }
 
     private List<Node> FindNearbyEnemies(Vector2 position, float range, int maxCount)
@@ -540,5 +704,42 @@ public class EffectInterpreter
         }
 
         return enemies;
+    }
+
+    private Color GetChainColor(List<EffectAction> chainedActions, EffectContext ctx)
+    {
+        if (chainedActions != null)
+        {
+            foreach (var action in chainedActions)
+            {
+                if (action.Action.ToLower() == "damage" && action.Args != null && action.Args.ContainsKey("element"))
+                {
+                    var element = action.Args["element"].ToString();
+                    return VisualSystem.GetElementColor(element);
+                }
+            }
+        }
+
+        if (ctx?.Ability?.Primitives != null && ctx.Ability.Primitives.Count > 0)
+        {
+            return VisualSystem.GetElementColor(ctx.Ability.Primitives);
+        }
+
+        return VisualSystem.GetElementColor("neutral");
+    }
+
+    private void SpawnChainVisual(Vector2 from, Vector2 to, Color color)
+    {
+        if (worldNode == null)
+            return;
+
+        var chain = new ChainVisual
+        {
+            From = from,
+            To = to,
+            ChainColor = color
+        };
+
+        worldNode.AddChild(chain);
     }
 }

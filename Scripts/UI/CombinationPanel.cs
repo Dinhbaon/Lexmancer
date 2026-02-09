@@ -13,8 +13,8 @@ public partial class CombinationPanel : Control
 {
 	private PlayerElementInventory inventory;
 	private LLMElementGenerator llmGenerator;
-	private string selectedElement1;
-	private string selectedElement2;
+	private int selectedElement1;
+	private int selectedElement2;
 
 	// Tab container
 	private TabContainer tabContainer;
@@ -37,6 +37,12 @@ public partial class CombinationPanel : Control
 	// Inventory tab elements
 	private VBoxContainer inventoryElementList;
 	private ScrollContainer inventoryScrollContainer;
+
+	// Test tab elements
+	private TextEdit jsonInput;
+	private Label testResultLabel;
+	private Button testJsonButton;
+	private Button clearDatabaseButton;
 
 	private bool isOpen = false;
 	private bool useLLM = true; // Toggle for LLM generation
@@ -162,6 +168,7 @@ public partial class CombinationPanel : Control
 		// Create tabs
 		CreateCombineTab();
 		CreateInventoryTab();
+		CreateTestTab();
 	}
 
 	private void CreateCombineTab()
@@ -374,7 +381,7 @@ public partial class CombinationPanel : Control
 		{
 			// Get element data
 			Element element = ElementRegistry.GetElement(elementId)
-				?? ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
+				;
 
 			// Add to first list
 			var button1 = CreateElementButton(elementId, element, count, 1);
@@ -416,14 +423,10 @@ public partial class CombinationPanel : Control
 		}
 	}
 
-	private HBoxContainer CreateInventoryElementRow(string elementId, int count)
+	private HBoxContainer CreateInventoryElementRow(int elementId, int count)
 	{
 		// Get element data
 		Element element = ElementRegistry.GetElement(elementId);
-		if (element == null)
-		{
-			element = ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
-		}
 
 		var row = new HBoxContainer();
 		row.AddThemeConstantOverride("separation", 10);
@@ -436,7 +439,7 @@ public partial class CombinationPanel : Control
 
 		// Element name and count
 		var nameLabel = new Label();
-		nameLabel.Text = $"{element?.Name ?? elementId} x{count}";
+		nameLabel.Text = $"{element?.Name ?? $"Element {elementId}"} x{count}";
 		nameLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 		nameLabel.VerticalAlignment = VerticalAlignment.Center;
 		nameLabel.AddThemeColorOverride("font_color", Colors.White);
@@ -479,7 +482,7 @@ public partial class CombinationPanel : Control
 		return row;
 	}
 
-	private void OnEquipButtonPressed(string elementId)
+	private void OnEquipButtonPressed(int elementId)
 	{
 		bool isEquipped = inventory.IsEquipped(elementId);
 
@@ -507,10 +510,10 @@ public partial class CombinationPanel : Control
 		RefreshInventoryList();
 	}
 
-	private Button CreateElementButton(string elementId, Element element, int count, int listNumber)
+	private Button CreateElementButton(int elementId, Element element, int count, int listNumber)
 	{
 		var button = new Button();
-		button.Text = $"{element?.Name ?? elementId} x{count}";
+		button.Text = $"{element?.Name ?? $"Element {elementId}"} x{count}";
 		button.CustomMinimumSize = new Vector2(0, 30);
 		button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
@@ -528,7 +531,7 @@ public partial class CombinationPanel : Control
 		return button;
 	}
 
-	private void SelectElement(string elementId, int listNumber)
+	private void SelectElement(int elementId, int listNumber)
 	{
 		if (listNumber == 1)
 		{
@@ -542,13 +545,13 @@ public partial class CombinationPanel : Control
 		}
 
 		// Update result label to show combination preview
-		if (!string.IsNullOrEmpty(selectedElement1) && !string.IsNullOrEmpty(selectedElement2))
+		if (selectedElement1 > 0 && selectedElement2 > 0)
 		{
 			// Get element data for display (check registry first for combined elements)
 			Element elem1 = ElementRegistry.GetElement(selectedElement1)
-				?? ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement1);
+				;
 			Element elem2 = ElementRegistry.GetElement(selectedElement2)
-				?? ElementDefinitions.BaseElements.GetValueOrDefault(selectedElement2);
+				;
 
 			// Check if this combination has been seen before
 			Element cachedCombination = llmGenerator?.GetCachedCombination(selectedElement1, selectedElement2);
@@ -561,7 +564,7 @@ public partial class CombinationPanel : Control
 
 				cachedElementLabel.Text = $"✨ {cachedCombination.Name}\n{cachedCombination.Description}";
 
-				resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2}";
+				resultLabel.Text = $"{elem1?.Name ?? selectedElement1.ToString()} + {elem2?.Name ?? selectedElement2.ToString()}";
 				resultLabel.AddThemeColorOverride("font_color", Colors.Cyan);
 			}
 			else
@@ -570,7 +573,7 @@ public partial class CombinationPanel : Control
 				cachedCombinationContainer.Visible = false;
 				combineButton.Visible = true;
 
-				resultLabel.Text = $"{elem1?.Name ?? selectedElement1} + {elem2?.Name ?? selectedElement2} = ???";
+				resultLabel.Text = $"{elem1?.Name ?? selectedElement1.ToString()} + {elem2?.Name ?? selectedElement2.ToString()} = ???";
 				resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
 			}
 		}
@@ -578,7 +581,7 @@ public partial class CombinationPanel : Control
 
 	private async void OnUseCachedPressed()
 	{
-		if (string.IsNullOrEmpty(selectedElement1) || string.IsNullOrEmpty(selectedElement2))
+		if (selectedElement1 <= 0 || selectedElement2 <= 0)
 		{
 			resultLabel.Text = "Select two elements first!";
 			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
@@ -622,8 +625,8 @@ public partial class CombinationPanel : Control
 			llmOutputLabel.AddThemeColorOverride("font_color", Colors.Cyan);
 
 			// Clear selections
-			selectedElement1 = null;
-			selectedElement2 = null;
+			selectedElement1 = 0;
+			selectedElement2 = 0;
 
 			// Refresh lists
 			RefreshAll();
@@ -632,7 +635,7 @@ public partial class CombinationPanel : Control
 
 	private async void OnCombinePressed(bool forceNew = false)
 	{
-		if (string.IsNullOrEmpty(selectedElement1) || string.IsNullOrEmpty(selectedElement2))
+		if (selectedElement1 <= 0 || selectedElement2 <= 0)
 		{
 			resultLabel.Text = "Select two elements first!";
 			resultLabel.AddThemeColorOverride("font_color", Colors.Red);
@@ -671,18 +674,18 @@ public partial class CombinationPanel : Control
 			{
 				var elapsed = (DateTime.Now - startTime).TotalSeconds;
 
+				// Ensure element is cached and has an ID before adding to inventory
+				if (newElement.Id <= 0)
+				{
+					ElementRegistry.CacheElement(newElement);
+					GD.Print($"Cached new element: {newElement.Name}");
+				}
+
 				// Use the inventory's combine method
 				var result = inventory.CombineElements(selectedElement1, selectedElement2, newElement);
 
 				if (result != null)
 				{
-					// Cache the element if it's new
-					if (!ElementRegistry.HasElement(newElement.Id))
-					{
-						ElementRegistry.CacheElement(newElement);
-						GD.Print($"Cached new element: {newElement.Name}");
-					}
-
 					// Show success
 					resultLabel.Text = $"Created: {newElement.Name}!";
 					resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
@@ -707,8 +710,8 @@ public partial class CombinationPanel : Control
 					llmOutputLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
 					// Clear selections
-					selectedElement1 = null;
-					selectedElement2 = null;
+					selectedElement1 = 0;
+					selectedElement2 = 0;
 
 					// Refresh lists
 					RefreshAll();
@@ -729,6 +732,178 @@ public partial class CombinationPanel : Control
 			llmOutputLabel.Text = $"❌ Error:\n{ex.Message}\n\nStack:\n{ex.StackTrace}";
 			llmOutputLabel.AddThemeColorOverride("font_color", Colors.OrangeRed);
 			GD.PrintErr($"Combination error: {ex}");
+		}
+	}
+
+	private void CreateTestTab()
+	{
+		var testTab = new VBoxContainer();
+		testTab.Name = "Test";
+		testTab.AddThemeConstantOverride("separation", 10);
+		tabContainer.AddChild(testTab);
+
+		// Instructions
+		var instructionLabel = new Label();
+		instructionLabel.Text = "Paste your custom JSON element here for testing:";
+		instructionLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		instructionLabel.AddThemeColorOverride("font_color", Colors.White);
+		instructionLabel.AddThemeFontSizeOverride("font_size", 14);
+		testTab.AddChild(instructionLabel);
+
+		// JSON input field
+		jsonInput = new TextEdit();
+		jsonInput.SizeFlagsVertical = SizeFlags.ExpandFill;
+		jsonInput.CustomMinimumSize = new Vector2(0, 300);
+		jsonInput.SyntaxHighlighter = null;
+		jsonInput.PlaceholderText = @"{
+  ""name"": ""Test Element"",
+  ""description"": ""A test element"",
+  ""color"": ""#FF5500"",
+  ""ability"": {
+    ""description"": ""Test ability"",
+    ""primitives"": [""fire"", ""water""],
+    ""effects"": [...],
+    ""cooldown"": 1.5
+  }
+}";
+		testTab.AddChild(jsonInput);
+
+		// Buttons row
+		var buttonsHBox = new HBoxContainer();
+		buttonsHBox.AddThemeConstantOverride("separation", 20);
+		buttonsHBox.Alignment = BoxContainer.AlignmentMode.Center;
+		testTab.AddChild(buttonsHBox);
+
+		// Test JSON button
+		testJsonButton = new Button();
+		testJsonButton.Text = "Test JSON";
+		testJsonButton.CustomMinimumSize = new Vector2(150, 40);
+		testJsonButton.Pressed += OnTestJsonPressed;
+		var testStyle = new StyleBoxFlat();
+		testStyle.BgColor = new Color(0.3f, 0.6f, 0.9f);
+		testJsonButton.AddThemeStyleboxOverride("normal", testStyle);
+		buttonsHBox.AddChild(testJsonButton);
+
+		// Clear database button
+		clearDatabaseButton = new Button();
+		clearDatabaseButton.Text = "Clear Database";
+		clearDatabaseButton.CustomMinimumSize = new Vector2(150, 40);
+		clearDatabaseButton.Pressed += OnClearDatabasePressed;
+		var clearStyle = new StyleBoxFlat();
+		clearStyle.BgColor = new Color(0.8f, 0.2f, 0.2f);
+		clearDatabaseButton.AddThemeStyleboxOverride("normal", clearStyle);
+		buttonsHBox.AddChild(clearDatabaseButton);
+
+		// Result label
+		testResultLabel = new Label();
+		testResultLabel.HorizontalAlignment = HorizontalAlignment.Center;
+		testResultLabel.AddThemeColorOverride("font_color", Colors.White);
+		testResultLabel.AddThemeFontSizeOverride("font_size", 14);
+		testResultLabel.AutowrapMode = TextServer.AutowrapMode.Word;
+		testTab.AddChild(testResultLabel);
+	}
+
+	private void OnTestJsonPressed()
+	{
+		var jsonText = jsonInput.Text.Trim();
+
+		if (string.IsNullOrEmpty(jsonText))
+		{
+			testResultLabel.Text = "Please enter some JSON first!";
+			testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			return;
+		}
+
+		try
+		{
+			if (!ElementJsonParser.TryParseElement(
+				jsonText,
+				out var name,
+				out var description,
+				out var colorHex,
+				out var ability,
+				out var parseError))
+			{
+				testResultLabel.Text = $"Failed to parse JSON: {parseError}";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				return;
+			}
+
+			if (ability == null)
+			{
+				testResultLabel.Text = "Failed to parse ability from JSON!";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				return;
+			}
+
+			if (string.IsNullOrWhiteSpace(name))
+				name = "Test Element";
+			if (string.IsNullOrWhiteSpace(description))
+				description = "A test element";
+			if (string.IsNullOrWhiteSpace(colorHex))
+				colorHex = "#808080";
+
+			// Create element from response (ID will be auto-assigned by database)
+			var newElement = new Element
+			{
+				// Id is auto-generated by database - don't set it
+				Primitive = null,
+				Name = name,
+				Description = description,
+				ColorHex = colorHex,
+				Tier = 2,
+				Recipe = new List<int>(),
+				Ability = ability
+			};
+
+			// Add to inventory
+			if (inventory != null)
+			{
+				// Cache element in database (this assigns the ID)
+				int elementId = ElementRegistry.CacheElement(newElement);
+
+				// Add to player inventory
+				inventory.AddElement(elementId, 1);
+
+				GD.Print($"Cached test element: {newElement.Name} (ID: {elementId})");
+
+				testResultLabel.Text = $"✅ Created element: {newElement.Name}\nAdded to inventory!";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+				// Refresh all lists
+				RefreshAll();
+			}
+			else
+			{
+				testResultLabel.Text = "Inventory not initialized!";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			}
+		}
+		catch (Exception ex)
+		{
+			testResultLabel.Text = $"❌ Error parsing JSON:\n{ex.Message}";
+			testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			GD.PrintErr($"JSON parse error: {ex}");
+		}
+	}
+
+	private void OnClearDatabasePressed()
+	{
+		try
+		{
+			// Clear element registry cache
+			ElementRegistry.ClearAllCache();
+
+			testResultLabel.Text = "✅ Database cleared successfully!";
+			testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+			GD.Print("SQLite database cleared");
+		}
+		catch (Exception ex)
+		{
+			testResultLabel.Text = $"❌ Error clearing database:\n{ex.Message}";
+			testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+			GD.PrintErr($"Database clear error: {ex}");
 		}
 	}
 

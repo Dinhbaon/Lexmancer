@@ -22,7 +22,8 @@ public static class GameConfig
 	public static int LLMGpuLayerCount { get; set; } = 0;  // CPU-only: no GPU layers (AMD iGPU not supported)
 	public static int LLMThreadCount { get; set; } = 6;  // Use 6 physical cores (12 threads / 2)
 	public static float LLMTemperature { get; set; } = 0.7f;
-	public static int LLMMaxTokens { get; set; } = 1200;  // Increased to handle complex ability JSON (~800-1000 tokens)
+	public static float LLMRepeatPenalty { get; set; } = 1.15f;  // Penalize repetition (1.0 = no penalty, higher = more penalty)
+	public static int LLMMaxTokens { get; set; } = 2400;  // Increased to reduce truncation for large JSON outputs
 
 	// Element Settings
 	public static bool CacheGeneratedAbilities { get; set; } = true;
@@ -49,6 +50,7 @@ public static class GameConfig
 				GD.Print($"  GPU Layers: {LLMGpuLayerCount}");
 				GD.Print($"  Threads: {LLMThreadCount}");
 				GD.Print($"  Temperature: {LLMTemperature}");
+				GD.Print($"  Repeat Penalty: {LLMRepeatPenalty}");
 				GD.Print($"  Max Tokens: {LLMMaxTokens}");
 			}
 			else

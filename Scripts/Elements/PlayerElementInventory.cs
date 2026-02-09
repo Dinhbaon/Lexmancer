@@ -11,22 +11,22 @@ namespace Lexmancer.Elements;
 /// </summary>
 public class PlayerElementInventory
 {
-	private Dictionary<string, int> quantities = new();
-	private List<string> equippedElements = new(); // Max 3 equipped elements
+	private Dictionary<int, int> quantities = new();
+	private List<int> equippedElements = new(); // Max 3 equipped elements
 
 	public const int MaxEquippedSlots = 3;
 
-	public event Action<string, int> OnElementAdded;
-	public event Action<string, int> OnElementConsumed;
-	public event Action<string> OnElementCombined;
+	public event Action<int, int> OnElementAdded;
+	public event Action<int, int> OnElementConsumed;
+	public event Action<int> OnElementCombined;
 	public event Action OnEquipmentChanged; // Fired when equipped elements change
 
 	/// <summary>
 	/// Add elements to inventory
 	/// </summary>
-	public void AddElement(string elementId, int count = 1)
+	public void AddElement(int elementId, int count = 1)
 	{
-		if (string.IsNullOrEmpty(elementId) || count <= 0)
+		if (elementId <= 0 || count <= 0)
 			return;
 
 		bool isNew = !quantities.ContainsKey(elementId);
@@ -44,15 +44,15 @@ public class PlayerElementInventory
 		}
 
 		OnElementAdded?.Invoke(elementId, count);
-		GD.Print($"Added {count}x {elementId} (now have {quantities[elementId]})");
+		GD.Print($"Added {count}x element ID {elementId} (now have {quantities[elementId]})");
 	}
 
 	/// <summary>
 	/// Check if player has element(s)
 	/// </summary>
-	public bool HasElement(string elementId, int count = 1)
+	public bool HasElement(int elementId, int count = 1)
 	{
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return false;
 
 		return quantities.TryGetValue(elementId, out int current) && current >= count;
@@ -62,7 +62,7 @@ public class PlayerElementInventory
 	/// Consume element(s) from inventory
 	/// Returns true if successful, false if not enough
 	/// </summary>
-	public bool ConsumeElement(string elementId, int count = 1)
+	public bool ConsumeElement(int elementId, int count = 1)
 	{
 		if (!HasElement(elementId, count))
 			return false;
@@ -81,14 +81,14 @@ public class PlayerElementInventory
 		}
 
 		OnElementConsumed?.Invoke(elementId, count);
-		GD.Print($"Consumed {count}x {elementId}");
+		GD.Print($"Consumed {count}x element ID {elementId}");
 		return true;
 	}
 
 	/// <summary>
 	/// Get quantity of specific element
 	/// </summary>
-	public int GetQuantity(string elementId)
+	public int GetQuantity(int elementId)
 	{
 		return quantities.TryGetValue(elementId, out int count) ? count : 0;
 	}
@@ -97,13 +97,13 @@ public class PlayerElementInventory
 	/// Check if two elements can be combined
 	/// Any two elements can be combined (no hardcoded recipes)
 	/// </summary>
-	public bool CanCombine(string element1, string element2)
+	public bool CanCombine(int element1Id, int element2Id)
 	{
-		if (string.IsNullOrEmpty(element1) || string.IsNullOrEmpty(element2))
+		if (element1Id <= 0 || element2Id <= 0)
 			return false;
 
 		// Check if we have both elements
-		return HasElement(element1) && HasElement(element2);
+		return HasElement(element1Id) && HasElement(element2Id);
 	}
 
 	/// <summary>
@@ -111,29 +111,29 @@ public class PlayerElementInventory
 	/// Returns the created element, or null if failed
 	/// NOTE: Result element is provided by caller (usually from LLM)
 	/// </summary>
-	public Element CombineElements(string element1, string element2, Element resultElement)
+	public Element CombineElements(int element1Id, int element2Id, Element resultElement)
 	{
-		if (!CanCombine(element1, element2))
+		if (!CanCombine(element1Id, element2Id))
 		{
-			GD.PrintErr($"Cannot combine {element1} + {element2}");
+			GD.PrintErr($"Cannot combine element {element1Id} + {element2Id}");
 			return null;
 		}
 
 		if (resultElement == null)
 		{
-			GD.PrintErr($"No result element provided for {element1} + {element2}");
+			GD.PrintErr($"No result element provided for {element1Id} + {element2Id}");
 			return null;
 		}
 
 		// Consume ingredients
-		ConsumeElement(element1, 1);
-		ConsumeElement(element2, 1);
+		ConsumeElement(element1Id, 1);
+		ConsumeElement(element2Id, 1);
 
 		// Add result to inventory
 		AddElement(resultElement.Id, 1);
 
 		OnElementCombined?.Invoke(resultElement.Id);
-		GD.Print($"Combined {element1} + {element2} = {resultElement.Name}!");
+		GD.Print($"Combined element {element1Id} + {element2Id} = {resultElement.Name}!");
 
 		return resultElement;
 	}
@@ -141,7 +141,7 @@ public class PlayerElementInventory
 	/// <summary>
 	/// Get all elements and their quantities
 	/// </summary>
-	public List<(string id, int count)> GetAll()
+	public List<(int id, int count)> GetAll()
 	{
 		return quantities
 			.OrderBy(kvp => kvp.Key)
@@ -152,7 +152,7 @@ public class PlayerElementInventory
 	/// <summary>
 	/// Get all element IDs
 	/// </summary>
-	public List<string> GetElementIds()
+	public List<int> GetElementIds()
 	{
 		return quantities.Keys.OrderBy(k => k).ToList();
 	}
@@ -160,9 +160,9 @@ public class PlayerElementInventory
 	/// <summary>
 	/// Equip an element to the hotbar
 	/// </summary>
-	public bool EquipElement(string elementId)
+	public bool EquipElement(int elementId)
 	{
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return false;
 
 		// Must have the element in inventory
@@ -176,22 +176,22 @@ public class PlayerElementInventory
 		// Check if we have room
 		if (equippedElements.Count >= MaxEquippedSlots)
 		{
-			GD.Print($"Cannot equip {elementId}: all {MaxEquippedSlots} slots full");
+			GD.Print($"Cannot equip element {elementId}: all {MaxEquippedSlots} slots full");
 			return false;
 		}
 
 		equippedElements.Add(elementId);
 		OnEquipmentChanged?.Invoke();
-		GD.Print($"Equipped {elementId}");
+		GD.Print($"Equipped element {elementId}");
 		return true;
 	}
 
 	/// <summary>
 	/// Unequip an element from the hotbar
 	/// </summary>
-	public bool UnequipElement(string elementId)
+	public bool UnequipElement(int elementId)
 	{
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return false;
 
 		if (!equippedElements.Contains(elementId))
@@ -199,14 +199,14 @@ public class PlayerElementInventory
 
 		equippedElements.Remove(elementId);
 		OnEquipmentChanged?.Invoke();
-		GD.Print($"Unequipped {elementId}");
+		GD.Print($"Unequipped element {elementId}");
 		return true;
 	}
 
 	/// <summary>
 	/// Check if an element is equipped
 	/// </summary>
-	public bool IsEquipped(string elementId)
+	public bool IsEquipped(int elementId)
 	{
 		return equippedElements.Contains(elementId);
 	}
@@ -214,9 +214,9 @@ public class PlayerElementInventory
 	/// <summary>
 	/// Get equipped elements (max 3)
 	/// </summary>
-	public List<string> GetEquippedElements()
+	public List<int> GetEquippedElements()
 	{
-		return new List<string>(equippedElements);
+		return new List<int>(equippedElements);
 	}
 
 	/// <summary>

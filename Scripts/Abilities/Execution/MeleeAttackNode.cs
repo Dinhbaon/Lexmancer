@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Lexmancer.Abilities.V2;
 using Lexmancer.Abilities.Visuals;
+using Lexmancer.Core;
 
 namespace Lexmancer.Abilities.Execution;
 
@@ -20,9 +21,14 @@ public partial class MeleeAttackNode : Area2D
     [Export] public float WindupTime { get; set; } = 0.05f; // Delay before hitbox appears
     [Export] public float ActiveTime { get; set; } = 0.2f; // How long hitbox stays
 
+    [Export] public string MovementType { get; set; } = "stationary"; // stationary, dash, lunge, jump_smash, backstep, blink, teleport_strike
+    [Export] public float MoveDistance { get; set; } = 0f; // Tiles (1 tile = 64px)
+    [Export] public float MoveDuration { get; set; } = 0f; // Seconds
+
     public Vector2 Direction { get; set; } = Vector2.Right;
     public List<EffectAction> OnHitActions { get; set; } = new();
     public EffectContext Context { get; set; }
+    public Node Caster { get; set; }
 
     private float timeAlive = 0f;
     private bool isActive = false;
@@ -30,9 +36,16 @@ public partial class MeleeAttackNode : Area2D
     private Color elementColor;
     private GpuParticles2D slashParticles;
     private Polygon2D slashVisual;
+    private Node2D casterNode;
+    private Tween movementTween;
+    private float activationDelay = 0f;
+    private bool followCaster = false;
 
     public override void _Ready()
     {
+        ResolveCasterNode();
+        TryStartMovement();
+
         // Get element color
         elementColor = GetElementColor();
 
@@ -122,13 +135,16 @@ public partial class MeleeAttackNode : Area2D
                 break;
         }
 
-        // Rotate collision to match direction (except for circle)
-        if (Shape.ToLower() != "circle")
-        {
-            collision.Rotation = Direction.Angle();
-        }
+        // Don't rotate the collision shape itself - we'll rotate the entire Area2D
+        // (Rotating a positioned CollisionShape2D moves it to the wrong location)
 
         AddChild(collision);
+
+        // Rotate the entire Area2D to match direction (except for circle)
+        if (Shape.ToLower() != "circle")
+        {
+            Rotation = Direction.Angle();
+        }
     }
 
     /// <summary>
@@ -195,7 +211,8 @@ public partial class MeleeAttackNode : Area2D
 
         int segments = 20;
         float angleRad = Mathf.DegToRad(ArcAngle);
-        float startAngle = Direction.Angle() - angleRad / 2f;
+        // Don't include Direction.Angle() here - the Area2D itself is rotated
+        float startAngle = -angleRad / 2f;
         float radius = Range * 64f;
 
         for (int i = 0; i <= segments; i++)
@@ -231,15 +248,14 @@ public partial class MeleeAttackNode : Area2D
     {
         float length = Range * 64f;
         float width = Width * 64f;
-        float angle = Direction.Angle();
 
-        // Create rectangle extending in direction
+        // Create rectangle extending forward (Area2D is rotated, so don't rotate points)
         var points = new Vector2[]
         {
-            Vector2.Zero,
-            new Vector2(length, -width/2).Rotated(angle),
-            new Vector2(length, width/2).Rotated(angle),
-            new Vector2(0, width/2).Rotated(angle)
+            new Vector2(0, -width/2),
+            new Vector2(length, -width/2),
+            new Vector2(length, width/2),
+            new Vector2(0, width/2)
         };
 
         return points;
@@ -276,8 +292,13 @@ public partial class MeleeAttackNode : Area2D
     {
         timeAlive += (float)delta;
 
+        if (followCaster && casterNode != null)
+        {
+            GlobalPosition = casterNode.GlobalPosition;
+        }
+
         // Enable collision after windup
-        if (!isActive && timeAlive >= WindupTime)
+        if (!isActive && timeAlive >= WindupTime + activationDelay)
         {
             isActive = true;
             Monitoring = true;
@@ -285,7 +306,7 @@ public partial class MeleeAttackNode : Area2D
         }
 
         // Destroy after active time expires
-        if (isActive && timeAlive >= WindupTime + ActiveTime)
+        if (isActive && timeAlive >= WindupTime + activationDelay + ActiveTime)
         {
             QueueFree();
         }
@@ -300,6 +321,112 @@ public partial class MeleeAttackNode : Area2D
         {
             slashVisual.Scale = Vector2.One;
         }
+    }
+
+    private void ResolveCasterNode()
+    {
+        if (Caster is Node2D caster2D)
+        {
+            casterNode = caster2D;
+            return;
+        }
+
+        if (Caster is IMoveable moveable)
+        {
+            casterNode = moveable.GetBody();
+            return;
+        }
+
+        if (Caster is Node casterNodeRef && casterNodeRef.GetParent() is Node2D parent2D)
+        {
+            casterNode = parent2D;
+        }
+    }
+
+    private void TryStartMovement()
+    {
+        if (casterNode == null)
+            return;
+
+        var movement = (MovementType ?? "stationary").ToLowerInvariant();
+        if (movement == "stationary" || MoveDistance <= 0f || MoveDuration <= 0f)
+            return;
+
+        Vector2 moveDir = Direction.Length() > 0 ? Direction.Normalized() : Vector2.Right;
+        switch (movement)
+        {
+            case "dash":
+            case "lunge":
+            case "jump_smash":
+                break;
+            case "backstep":
+                moveDir = -moveDir;
+                break;
+            case "blink":
+            case "teleport_strike":
+                break;
+            default:
+                return;
+        }
+
+        activationDelay = movement == "jump_smash" ? MoveDuration : 0f;
+        followCaster = true;
+
+        var target = casterNode.GlobalPosition + moveDir * MoveDistance * 64f;
+        if (movement == "teleport_strike")
+        {
+            var enemy = FindNearestEnemy(casterNode.GlobalPosition);
+            if (enemy == null)
+                return;
+
+            var enemyPos = enemy.GlobalPosition;
+            var toEnemy = enemyPos - casterNode.GlobalPosition;
+            if (toEnemy.Length() <= 0.001f)
+                return;
+
+            moveDir = toEnemy.Normalized();
+            Direction = moveDir;
+            float maxTravel = Mathf.Max(0f, toEnemy.Length() - 32f);
+            float travel = Mathf.Min(MoveDistance * 64f, maxTravel);
+            target = casterNode.GlobalPosition + moveDir * travel;
+        }
+
+        if (movement == "blink" || movement == "teleport_strike")
+        {
+            casterNode.GlobalPosition = target;
+            GlobalPosition = casterNode.GlobalPosition;
+        }
+        else
+        {
+            movementTween = CreateTween();
+            movementTween.TweenProperty(casterNode, "global_position", target, MoveDuration)
+                .SetTrans(Tween.TransitionType.Sine)
+                .SetEase(movement == "jump_smash" ? Tween.EaseType.InOut : Tween.EaseType.Out);
+        }
+    }
+
+    private Node2D FindNearestEnemy(Vector2 from)
+    {
+        var searchRoot = Context?.WorldNode ?? GetTree().Root;
+        if (searchRoot == null)
+            return null;
+
+        Node2D nearest = null;
+        float bestDist = float.MaxValue;
+        foreach (Node node in searchRoot.GetTree().GetNodesInGroup("enemies"))
+        {
+            if (node is not Node2D enemy)
+                continue;
+
+            float dist = enemy.GlobalPosition.DistanceTo(from);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                nearest = enemy;
+            }
+        }
+
+        return nearest;
     }
 
     private void OnBodyEntered(Node2D body)

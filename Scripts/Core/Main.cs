@@ -142,13 +142,10 @@ public partial class Main : Node2D
 	{
 		GD.Print("Loading hardcoded elements...");
 
-		// Cache all 8 base elements (no combined elements - those are dynamic now!)
-		foreach (var kvp in ElementDefinitions.BaseElements)
-		{
-			ElementRegistry.CacheElement(kvp.Value);
-		}
+		// Initialize all 8 base elements (inserts into database with auto-generated IDs)
+		var baseElementIds = ElementDefinitions.InitializeBaseElements();
 
-		GD.Print($"Loaded {ElementDefinitions.BaseElements.Count} base elements");
+		GD.Print($"Loaded {baseElementIds.Count} base elements");
 		ElementRegistry.PrintStats();
 	}
 

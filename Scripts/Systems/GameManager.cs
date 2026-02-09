@@ -23,14 +23,13 @@ public partial class GameManager : Node
 
 		// Initialize player inventory with all 8 base primitives
 		Inventory = new PlayerElementInventory();
-		Inventory.AddElement("fire", 2);
-		Inventory.AddElement("water", 2);
-		Inventory.AddElement("earth", 2);
-		Inventory.AddElement("lightning", 2);
-		Inventory.AddElement("poison", 2);
-		Inventory.AddElement("wind", 2);
-		Inventory.AddElement("shadow", 2);
-		Inventory.AddElement("light", 2);
+
+		// Get all tier 1 (base) elements and add them to inventory
+		var baseElements = ElementRegistry.GetElementsByTier(1);
+		foreach (var element in baseElements)
+		{
+			Inventory.AddElement(element.Id, 2);
+		}
 
 		GD.Print("Starting inventory:");
 		Inventory.PrintInventory();

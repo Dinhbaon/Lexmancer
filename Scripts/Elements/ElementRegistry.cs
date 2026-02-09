@@ -11,7 +11,7 @@ namespace Lexmancer.Elements;
 public static class ElementRegistry
 {
 	private static ElementDatabase database;
-	private static Dictionary<string, Element> runtimeCache = new();
+	private static Dictionary<int, Element> runtimeCache = new();
 	private static bool isInitialized = false;
 	private static string currentPlayerId;
 
@@ -35,7 +35,7 @@ public static class ElementRegistry
 
 		currentPlayerId = playerId;
 		database = new ElementDatabase(playerId);
-		runtimeCache = new Dictionary<string, Element>();
+		runtimeCache = new Dictionary<int, Element>();
 		isInitialized = true;
 
 		GD.Print($"ElementRegistry initialized for player: {playerId}");
@@ -68,11 +68,11 @@ public static class ElementRegistry
 	/// <summary>
 	/// Get an element by ID (with caching) - unified lookup for all elements
 	/// </summary>
-	public static Element GetElement(string elementId)
+	public static Element GetElement(int elementId)
 	{
 		ThrowIfNotInitialized();
 
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return null;
 
 		// Check runtime cache first
@@ -91,7 +91,7 @@ public static class ElementRegistry
 			// Update last accessed timestamp
 			database.UpdateLastAccessed(elementId);
 
-			GD.Print($"Loaded element from database: {elementId}");
+			GD.Print($"Loaded element from database: ID {elementId}");
 		}
 
 		return element;
@@ -142,11 +142,11 @@ public static class ElementRegistry
 	/// <summary>
 	/// Check if an element exists
 	/// </summary>
-	public static bool HasElement(string elementId)
+	public static bool HasElement(int elementId)
 	{
 		ThrowIfNotInitialized();
 
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return false;
 
 		// Check runtime cache first
@@ -160,7 +160,7 @@ public static class ElementRegistry
 	/// <summary>
 	/// Get recipe ingredients for an element
 	/// </summary>
-	public static List<string> GetRecipeIngredients(string elementId)
+	public static List<int> GetRecipeIngredients(int elementId)
 	{
 		ThrowIfNotInitialized();
 		return database.GetRecipeIngredients(elementId);
@@ -170,27 +170,30 @@ public static class ElementRegistry
 
 	/// <summary>
 	/// Cache an element (updates both runtime cache and database)
+	/// Returns the element ID (auto-generated on insert)
 	/// </summary>
-	public static void CacheElement(Element element)
+	public static int CacheElement(Element element)
 	{
 		ThrowIfNotInitialized();
 
 		if (element == null)
 			throw new ArgumentNullException(nameof(element));
 
-		// Cache in database
-		database.CacheElement(element);
+		// Cache in database (this sets element.Id if it's a new element)
+		int id = database.CacheElement(element);
 
 		// Update runtime cache
-		runtimeCache[element.Id] = element;
+		runtimeCache[id] = element;
 
-		GD.Print($"Cached element: {element.Id}");
+		GD.Print($"Cached element: ID {id} ({element.Name})");
+
+		return id;
 	}
 
 	/// <summary>
 	/// Preload elements into runtime cache (for startup optimization)
 	/// </summary>
-	public static void PreloadElements(List<string> elementIds)
+	public static void PreloadElements(List<int> elementIds)
 	{
 		ThrowIfNotInitialized();
 

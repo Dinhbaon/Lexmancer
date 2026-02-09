@@ -16,7 +16,7 @@ public partial class ElementHotbar : Control
 	private Node worldNode;
 
 	private const int MaxSlots = 3;
-	private List<string> equippedElements = new();
+	private List<int> equippedElements = new();
 	private int activeSlot = 0; // Currently selected slot (0-2)
 
 	public override void _Ready()
@@ -107,7 +107,7 @@ public partial class ElementHotbar : Control
 		// Create buttons for equipped elements (up to 3)
 		for (int i = 0; i < equippedElements.Count; i++)
 		{
-			string elementId = equippedElements[i];
+			int elementId = equippedElements[i];
 			int count = inventory.GetQuantity(elementId);
 
 			var button = CreateElementButton(elementId, count, i);
@@ -122,14 +122,10 @@ public partial class ElementHotbar : Control
 		}
 	}
 
-	private Button CreateElementButton(string elementId, int count, int slotIndex)
+	private Button CreateElementButton(int elementId, int count, int slotIndex)
 	{
 		// Get element data
 		Element element = ElementRegistry.GetElement(elementId);
-		if (element == null)
-		{
-			element = ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
-		}
 
 		var button = new Button();
 		button.CustomMinimumSize = new Vector2(100, 50);
@@ -139,7 +135,7 @@ public partial class ElementHotbar : Control
 		// Set text with key binding
 		string keyLabel = $"[{slotIndex + 1}]";
 		string activeMarker = (slotIndex == activeSlot) ? "► " : "";
-		button.Text = $"{activeMarker}{keyLabel} {element?.Name ?? elementId}\n∞"; // Infinity symbol for unlimited
+		button.Text = $"{activeMarker}{keyLabel} {element?.Name ?? elementId.ToString()}\n∞"; // Infinity symbol for unlimited
 
 		// Set color based on element and highlight if active
 		if (element != null)
@@ -171,18 +167,14 @@ public partial class ElementHotbar : Control
 		if (slotIndex < 0 || slotIndex >= equippedElements.Count)
 			return;
 
-		string elementId = equippedElements[slotIndex];
+		int elementId = equippedElements[slotIndex];
 
 		// Get element
 		Element element = ElementRegistry.GetElement(elementId);
-		if (element == null)
-		{
-			element = ElementDefinitions.BaseElements.GetValueOrDefault(elementId);
-		}
 
 		if (element?.Ability == null)
 		{
-			GD.PrintErr($"❌ Element {elementId} has no ability!");
+			GD.PrintErr($"❌ Element ID {elementId} has no ability!");
 			GD.PrintErr($"   Element: {element}");
 			GD.PrintErr($"   AbilityJson length: {element?.AbilityJson?.Length ?? 0}");
 			if (!string.IsNullOrEmpty(element?.AbilityJson))
@@ -195,7 +187,7 @@ public partial class ElementHotbar : Control
 		// Check if we have the element
 		if (!inventory.HasElement(elementId))
 		{
-			GD.Print($"No {elementId} remaining");
+			GD.Print($"No {element.Name} (ID: {elementId}) remaining");
 			return;
 		}
 

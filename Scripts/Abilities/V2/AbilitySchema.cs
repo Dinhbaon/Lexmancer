@@ -111,7 +111,8 @@ public static class AbilitySchema
                   ""radius"": {""type"": ""number"", ""minimum"": 50, ""maximum"": 300},
                   ""duration"": {""type"": ""number"", ""minimum"": 1, ""maximum"": 10},
                   ""lingering_damage"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 20},
-                  ""growth_time"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 3}
+                  ""growth_time"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 3},
+                  ""damage"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 100}
                 }
               }
             }
@@ -151,7 +152,10 @@ public static class AbilitySchema
                   ""shape"": {""enum"": [""arc"", ""circle"", ""rectangle""]},
                   ""range"": {""type"": ""number"", ""minimum"": 0.5, ""maximum"": 3},
                   ""arc_angle"": {""type"": ""number"", ""minimum"": 30, ""maximum"": 360},
-                  ""width"": {""type"": ""number"", ""minimum"": 0.2, ""maximum"": 2}
+                  ""width"": {""type"": ""number"", ""minimum"": 0.2, ""maximum"": 2},
+                  ""movement"": {""enum"": [""stationary"", ""dash"", ""lunge"", ""jump_smash"", ""backstep"", ""blink"", ""teleport_strike""]},
+                  ""move_distance"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 4},
+                  ""move_duration"": {""type"": ""number"", ""minimum"": 0, ""maximum"": 0.6}
                 }
               }
             }
@@ -170,6 +174,24 @@ public static class AbilitySchema
                 ""properties"": {
                   ""max_chains"": {""type"": ""number"", ""minimum"": 2, ""maximum"": 5},
                   ""range"": {""type"": ""number"", ""minimum"": 100, ""maximum"": 300}
+                }
+              }
+            }
+          }
+        },
+        {
+          ""if"": {
+            ""properties"": {""action"": {""const"": ""repeat""}}
+          },
+          ""then"": {
+            ""required"": [""on_hit""],
+            ""properties"": {
+              ""on_hit"": {""minItems"": 1},
+              ""args"": {
+                ""required"": [""count"", ""interval""],
+                ""properties"": {
+                  ""count"": {""type"": ""number"", ""minimum"": 2, ""maximum"": 5},
+                  ""interval"": {""type"": ""number"", ""minimum"": 0.5, ""maximum"": 2}
                 }
               }
             }
@@ -208,7 +230,8 @@ public static class AbilitySchema
                 ""required"": [""amount""],
                 ""properties"": {
                   ""amount"": {""type"": ""number"", ""minimum"": 1, ""maximum"": 100},
-                  ""element"": {""enum"": [""fire"", ""water"", ""earth"", ""lightning"", ""poison"", ""wind"", ""shadow"", ""light"", ""neutral""]}
+                  ""element"": {""enum"": [""fire"", ""water"", ""earth"", ""lightning"", ""poison"", ""wind"", ""shadow"", ""light"", ""neutral""]},
+                  ""area_radius"": {""type"": ""number"", ""minimum"": 50, ""maximum"": 300}
                 }
               }
             }
@@ -289,6 +312,7 @@ TOP-LEVEL ACTIONS (allowed at root level):
 ✅ spawn_area - Create area effect
 ✅ spawn_beam - Fire a beam
 ✅ spawn_melee - Melee attack
+   - melee args can include movement: stationary/dash/lunge/jump_smash/backstep/sidestep_left/sidestep_right
 ✅ chain_to_nearby - Chain to nearby enemies
 ✅ repeat - Repeat actions multiple times
 

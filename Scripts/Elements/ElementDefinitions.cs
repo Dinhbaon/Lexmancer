@@ -13,14 +13,60 @@ namespace Lexmancer.Elements;
 public static class ElementDefinitions
 {
 	/// <summary>
-	/// Base elements (Tier 1) - all 8 primitives
-	/// Keyed by string ID for unified lookup
+	/// Initialize base elements in the database and return their IDs
+	/// Should be called once on game startup
 	/// </summary>
-	public static Dictionary<string, Element> BaseElements = new()
+	public static Dictionary<PrimitiveType, int> InitializeBaseElements()
 	{
-		["fire"] = new Element
+		var baseElementIds = new Dictionary<PrimitiveType, int>();
+
+		// Create base elements (without IDs - database will assign them)
+		var baseElements = CreateBaseElementsList();
+
+		// Check for existing base elements to avoid duplicates
+		var existingBaseElements = ElementRegistry.GetElementsByTier(1);
+		var existingByPrimitive = new Dictionary<PrimitiveType, Element>();
+		foreach (var existing in existingBaseElements)
 		{
-			Id = "fire",
+			if (existing.Primitive.HasValue && !existingByPrimitive.ContainsKey(existing.Primitive.Value))
+			{
+				existingByPrimitive[existing.Primitive.Value] = existing;
+			}
+		}
+
+		foreach (var element in baseElements)
+		{
+			if (!element.Primitive.HasValue)
+				continue;
+
+			// If a base element already exists, update it instead of inserting a duplicate
+			if (existingByPrimitive.TryGetValue(element.Primitive.Value, out var existing))
+			{
+				element.Id = existing.Id;
+				ElementRegistry.CacheElement(element);
+				baseElementIds[element.Primitive.Value] = existing.Id;
+				GD.Print($"Updated base element: {element.Name} (ID: {existing.Id})");
+				continue;
+			}
+
+			// Cache element in database (this assigns the ID)
+			int id = ElementRegistry.CacheElement(element);
+
+			// Store the mapping from primitive type to database ID
+			baseElementIds[element.Primitive.Value] = id;
+			GD.Print($"Initialized base element: {element.Name} (ID: {id})");
+		}
+
+		return baseElementIds;
+	}
+
+	/// <summary>
+	/// Create base element definitions (without database IDs)
+	/// </summary>
+	private static List<Element> CreateBaseElementsList() => new()
+	{
+		new Element
+		{
 			Primitive = PrimitiveType.Fire,
 			Name = "Fire",
 			Description = "Crackling flames and searing heat",
@@ -29,9 +75,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateFireballAbility()
 		},
-		["water"] = new Element
+		new Element
 		{
-			Id = "water",
 			Primitive = PrimitiveType.Ice,
 			Name = "Water",  // Display as "Water" for UI
 			Description = "Flowing liquid, cool and adaptable",
@@ -40,9 +85,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateWaterJetAbility()
 		},
-		["earth"] = new Element
+		new Element
 		{
-			Id = "earth",
 			Primitive = PrimitiveType.Earth,
 			Name = "Earth",
 			Description = "Solid stone and ancient ground",
@@ -51,9 +95,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateRockThrowAbility()
 		},
-		["lightning"] = new Element
+		new Element
 		{
-			Id = "lightning",
 			Primitive = PrimitiveType.Lightning,
 			Name = "Lightning",
 			Description = "Electric energy, rapid and chaotic",
@@ -62,9 +105,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateLightningBoltAbility()
 		},
-		["poison"] = new Element
+		new Element
 		{
-			Id = "poison",
 			Primitive = PrimitiveType.Poison,
 			Name = "Poison",
 			Description = "Corrosive toxin, insidious and persistent",
@@ -73,9 +115,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreatePoisonDartAbility()
 		},
-		["wind"] = new Element
+		new Element
 		{
-			Id = "wind",
 			Primitive = PrimitiveType.Wind,
 			Name = "Wind",
 			Description = "Rushing air currents, ever-moving",
@@ -84,9 +125,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateWindGustAbility()
 		},
-		["shadow"] = new Element
+		new Element
 		{
-			Id = "shadow",
 			Primitive = PrimitiveType.Shadow,
 			Name = "Shadow",
 			Description = "Darkness that consumes light",
@@ -95,9 +135,8 @@ public static class ElementDefinitions
 			Recipe = new(),
 			Ability = CreateShadowDrainAbility()
 		},
-		["light"] = new Element
+		new Element
 		{
-			Id = "light",
 			Primitive = PrimitiveType.Light,
 			Name = "Light",
 			Description = "Brilliant radiance and illumination",
@@ -109,13 +148,12 @@ public static class ElementDefinitions
 	};
 
 	/// <summary>
-	/// Get all elements (only base elements now - combinations are dynamic)
+	/// Get all base elements (without IDs - for reference only)
+	/// Use ElementRegistry.GetElementsByTier(1) to get elements with database IDs
 	/// </summary>
-	public static List<Element> GetAllElements()
+	public static List<Element> GetAllBaseElements()
 	{
-		var all = new List<Element>();
-		all.AddRange(BaseElements.Values);
-		return all;
+		return CreateBaseElementsList();
 	}
 
 	// ==================== ABILITY DEFINITIONS ====================

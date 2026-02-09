@@ -98,16 +98,19 @@ public partial class ModelManager : Node
 			var samplingPipeline = new DefaultSamplingPipeline
 			{
 				Temperature = GameConfig.LLMTemperature,
+				RepeatPenalty = GameConfig.LLMRepeatPenalty,
+				PresencePenalty = 0.5f, 
+				FrequencyPenalty = 0.5f,
 				Grammar = new Grammar(GetElementGrammar(), "root")
 			};
 
-			GD.Print("Using JSON grammar constraint for guaranteed valid output");
+			GD.Print($"Using JSON grammar constraint with repeat_penalty={GameConfig.LLMRepeatPenalty}");
 
 			var inferenceParams = new InferenceParams
 			{
 				SamplingPipeline = samplingPipeline,
 				MaxTokens = GameConfig.LLMMaxTokens,
-				AntiPrompts = new[] { "\n\n\n" },
+				AntiPrompts = new[] { "}" }
 			};
 
 			var result = new System.Text.StringBuilder();

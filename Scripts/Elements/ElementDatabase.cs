@@ -55,7 +55,6 @@ public class ElementDatabase : IDisposable
 			-- Main elements table
 			CREATE TABLE IF NOT EXISTS elements (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				element_id TEXT NOT NULL UNIQUE,
 				element_json TEXT NOT NULL,
 				tier INTEGER NOT NULL,
 				version INTEGER NOT NULL DEFAULT 1,
@@ -64,16 +63,16 @@ public class ElementDatabase : IDisposable
 			);
 
 			-- Indexes for performance
-			CREATE INDEX IF NOT EXISTS idx_element_id ON elements(element_id);
 			CREATE INDEX IF NOT EXISTS idx_tier ON elements(tier);
 
 			-- Recipe table for querying what elements create what
 			CREATE TABLE IF NOT EXISTS element_recipes (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				result_element_id TEXT NOT NULL,
-				ingredient_element_id TEXT NOT NULL,
+				result_element_id INTEGER NOT NULL,
+				ingredient_element_id INTEGER NOT NULL,
 				created_at INTEGER NOT NULL,
-				FOREIGN KEY(result_element_id) REFERENCES elements(element_id)
+				FOREIGN KEY(result_element_id) REFERENCES elements(id),
+				FOREIGN KEY(ingredient_element_id) REFERENCES elements(id)
 			);
 
 			-- Index for recipe queries
@@ -90,40 +89,68 @@ public class ElementDatabase : IDisposable
 
 	/// <summary>
 	/// Cache an element (insert or update)
+	/// Returns the element ID (auto-generated on insert, existing on update)
 	/// </summary>
-	public void CacheElement(Element element)
+	public int CacheElement(Element element)
 	{
 		if (element == null)
 			throw new ArgumentNullException(nameof(element));
 
 		var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-		// Upsert element
-		var sql = @"
-			INSERT INTO elements (element_id, element_json, tier, version, created_at, last_accessed)
-			VALUES (@id, @json, @tier, @version, @created, @accessed)
-			ON CONFLICT(element_id)
-			DO UPDATE SET
-				element_json = @json,
-				tier = @tier,
-				version = @version,
-				last_accessed = @accessed
-		";
+		// Check if element already exists (update) or is new (insert)
+		if (element.Id > 0)
+		{
+			// Update existing element
+			var updateSql = @"
+				UPDATE elements
+				SET element_json = @json,
+					tier = @tier,
+					version = @version,
+					last_accessed = @accessed
+				WHERE id = @id
+			";
 
-		using var command = connection.CreateCommand();
-		command.CommandText = sql;
-		command.Parameters.AddWithValue("@id", element.Id);
-		command.Parameters.AddWithValue("@json", element.ToJson());
-		command.Parameters.AddWithValue("@tier", element.Tier);
-		command.Parameters.AddWithValue("@version", element.Version);
-		command.Parameters.AddWithValue("@created", element.CreatedAt);
-		command.Parameters.AddWithValue("@accessed", timestamp);
-		command.ExecuteNonQuery();
+			using var updateCmd = connection.CreateCommand();
+			updateCmd.CommandText = updateSql;
+			updateCmd.Parameters.AddWithValue("@id", element.Id);
+			updateCmd.Parameters.AddWithValue("@json", element.ToJson());
+			updateCmd.Parameters.AddWithValue("@tier", element.Tier);
+			updateCmd.Parameters.AddWithValue("@version", element.Version);
+			updateCmd.Parameters.AddWithValue("@accessed", timestamp);
+			updateCmd.ExecuteNonQuery();
+
+			GD.Print($"Updated element ID {element.Id}: {element.Name}");
+		}
+		else
+		{
+			// Insert new element
+			var insertSql = @"
+				INSERT INTO elements (element_json, tier, version, created_at, last_accessed)
+				VALUES (@json, @tier, @version, @created, @accessed)
+			";
+
+			using var insertCmd = connection.CreateCommand();
+			insertCmd.CommandText = insertSql;
+			insertCmd.Parameters.AddWithValue("@json", element.ToJson());
+			insertCmd.Parameters.AddWithValue("@tier", element.Tier);
+			insertCmd.Parameters.AddWithValue("@version", element.Version);
+			insertCmd.Parameters.AddWithValue("@created", element.CreatedAt);
+			insertCmd.Parameters.AddWithValue("@accessed", timestamp);
+			insertCmd.ExecuteNonQuery();
+
+			// Get the auto-generated ID
+			using var idCmd = connection.CreateCommand();
+			idCmd.CommandText = "SELECT last_insert_rowid()";
+			element.Id = Convert.ToInt32(idCmd.ExecuteScalar());
+
+			GD.Print($"Inserted new element ID {element.Id}: {element.Name}");
+		}
 
 		// Update recipe table
 		UpdateRecipeTable(element);
 
-		GD.Print($"Cached element: {element.Id}");
+		return element.Id;
 	}
 
 	/// <summary>
@@ -149,12 +176,12 @@ public class ElementDatabase : IDisposable
 				VALUES (@result, @ingredient, @created)
 			";
 
-			foreach (var ingredient in element.Recipe)
+			foreach (var ingredientId in element.Recipe)
 			{
 				using var insertCmd = connection.CreateCommand();
 				insertCmd.CommandText = insertSql;
 				insertCmd.Parameters.AddWithValue("@result", element.Id);
-				insertCmd.Parameters.AddWithValue("@ingredient", ingredient);
+				insertCmd.Parameters.AddWithValue("@ingredient", ingredientId);
 				insertCmd.Parameters.AddWithValue("@created", timestamp);
 				insertCmd.ExecuteNonQuery();
 			}
@@ -164,12 +191,12 @@ public class ElementDatabase : IDisposable
 	/// <summary>
 	/// Get an element by ID
 	/// </summary>
-	public Element GetElement(string elementId)
+	public Element GetElement(int elementId)
 	{
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return null;
 
-		var sql = "SELECT element_json FROM elements WHERE element_id = @id LIMIT 1";
+		var sql = "SELECT id, element_json FROM elements WHERE id = @id LIMIT 1";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;
@@ -178,8 +205,11 @@ public class ElementDatabase : IDisposable
 		using var reader = command.ExecuteReader();
 		if (reader.Read())
 		{
-			var json = reader.GetString(0);
-			return Element.FromJson(json);
+			var id = reader.GetInt32(0);
+			var json = reader.GetString(1);
+			var element = Element.FromJson(json);
+			element.Id = id; // Set the ID from database
+			return element;
 		}
 
 		return null;
@@ -192,7 +222,7 @@ public class ElementDatabase : IDisposable
 	{
 		var elements = new List<Element>();
 
-		var sql = "SELECT element_json FROM elements WHERE tier = @tier ORDER BY element_id";
+		var sql = "SELECT id, element_json FROM elements WHERE tier = @tier ORDER BY id";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;
@@ -201,10 +231,13 @@ public class ElementDatabase : IDisposable
 		using var reader = command.ExecuteReader();
 		while (reader.Read())
 		{
-			var json = reader.GetString(0);
+			var id = reader.GetInt32(0);
+			var json = reader.GetString(1);
 			try
 			{
-				elements.Add(Element.FromJson(json));
+				var element = Element.FromJson(json);
+				element.Id = id; // Set the ID from database
+				elements.Add(element);
 			}
 			catch (Exception ex)
 			{
@@ -222,7 +255,7 @@ public class ElementDatabase : IDisposable
 	{
 		var elements = new List<Element>();
 
-		var sql = "SELECT element_json FROM elements ORDER BY tier, element_id";
+		var sql = "SELECT id, element_json FROM elements ORDER BY tier, id";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;
@@ -230,10 +263,13 @@ public class ElementDatabase : IDisposable
 		using var reader = command.ExecuteReader();
 		while (reader.Read())
 		{
-			var json = reader.GetString(0);
+			var id = reader.GetInt32(0);
+			var json = reader.GetString(1);
 			try
 			{
-				elements.Add(Element.FromJson(json));
+				var element = Element.FromJson(json);
+				element.Id = id; // Set the ID from database
+				elements.Add(element);
 			}
 			catch (Exception ex)
 			{
@@ -248,9 +284,9 @@ public class ElementDatabase : IDisposable
 	/// <summary>
 	/// Get the ingredient element IDs that create this element
 	/// </summary>
-	public List<string> GetRecipeIngredients(string elementId)
+	public List<int> GetRecipeIngredients(int elementId)
 	{
-		var ingredients = new List<string>();
+		var ingredients = new List<int>();
 
 		var sql = "SELECT ingredient_element_id FROM element_recipes WHERE result_element_id = @id";
 
@@ -261,7 +297,7 @@ public class ElementDatabase : IDisposable
 		using var reader = command.ExecuteReader();
 		while (reader.Read())
 		{
-			ingredients.Add(reader.GetString(0));
+			ingredients.Add(reader.GetInt32(0));
 		}
 
 		return ingredients;
@@ -270,12 +306,12 @@ public class ElementDatabase : IDisposable
 	/// <summary>
 	/// Check if an element exists in the database
 	/// </summary>
-	public bool HasElement(string elementId)
+	public bool HasElement(int elementId)
 	{
-		if (string.IsNullOrEmpty(elementId))
+		if (elementId <= 0)
 			return false;
 
-		var sql = "SELECT COUNT(*) FROM elements WHERE element_id = @id";
+		var sql = "SELECT COUNT(*) FROM elements WHERE id = @id";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;
@@ -288,11 +324,11 @@ public class ElementDatabase : IDisposable
 	/// <summary>
 	/// Update the last accessed timestamp for an element
 	/// </summary>
-	public void UpdateLastAccessed(string elementId)
+	public void UpdateLastAccessed(int elementId)
 	{
 		var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-		var sql = "UPDATE elements SET last_accessed = @timestamp WHERE element_id = @id";
+		var sql = "UPDATE elements SET last_accessed = @timestamp WHERE id = @id";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;
@@ -306,7 +342,8 @@ public class ElementDatabase : IDisposable
 	/// </summary>
 	public void ClearCache()
 	{
-		var sql = "DELETE FROM elements; DELETE FROM element_recipes;";
+		// Delete recipes first to avoid foreign key constraint violations
+		var sql = "DELETE FROM element_recipes; DELETE FROM elements;";
 
 		using var command = connection.CreateCommand();
 		command.CommandText = sql;

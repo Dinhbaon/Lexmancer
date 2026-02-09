@@ -156,7 +156,9 @@ public static class AbilityBuilder
         return value.ValueKind switch
         {
             JsonValueKind.String => value.GetString(),
-            JsonValueKind.Number => value.TryGetInt32(out var i) ? (object)i : value.GetDouble(),
+            // Always parse numbers as double to avoid int/float type conversion issues
+            // The EffectInterpreter will convert to the appropriate type (int/float) as needed
+            JsonValueKind.Number => value.GetDouble(),
             JsonValueKind.True => true,
             JsonValueKind.False => false,
             JsonValueKind.Array => ParseArray(value),

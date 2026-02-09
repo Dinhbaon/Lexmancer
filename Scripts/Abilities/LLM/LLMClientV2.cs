@@ -10,6 +10,7 @@ using OllamaSharp;
 using OllamaSharp.Models;
 using Lexmancer.Abilities.V2;
 using Lexmancer.Abilities.LLM;
+using Lexmancer.Elements;
 using Lexmancer.Config;
 
 /// <summary>
@@ -96,51 +97,34 @@ public class LLMClientV2
 
             GD.Print($"Received element response ({jsonResponse.Length} chars)");
 
-            // Clean up JSON response (remove any trailing text after closing brace)
-            int lastBrace = jsonResponse.LastIndexOf('}');
-            if (lastBrace > 0 && lastBrace < jsonResponse.Length - 1)
+            jsonResponse = SanitizeJsonResponse(jsonResponse);
+
+            if (!ElementJsonParser.TryParseElement(
+                jsonResponse,
+                out var elemName,
+                out var elemDescription,
+                out var elemColorHex,
+                out var elemAbility,
+                out var parseError))
             {
-                jsonResponse = jsonResponse.Substring(0, lastBrace + 1);
+                throw new Exception($"Failed to parse element JSON: {parseError}");
             }
 
-            // Parse JSON response - try direct deserialization first (LLamaSharp often returns complete objects)
-            var options = new JsonSerializerOptions
+            if (string.IsNullOrWhiteSpace(elemName))
+                elemName = $"{element1Name}-{element2Name}";
+            if (string.IsNullOrWhiteSpace(elemDescription))
+                elemDescription = $"A fusion of {element1Name} and {element2Name}";
+            if (string.IsNullOrWhiteSpace(elemColorHex))
+                elemColorHex = "#808080";
+
+            // Safety: Truncate overly long descriptions (max 200 chars)
+            if (elemDescription.Length > 200)
             {
-                PropertyNameCaseInsensitive = true
-            };
-
-            // Check if response has Id/Name (ElementGenerationResponse format)
-            var testParsed = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(jsonResponse, options);
-            if (testParsed.ContainsKey("Id") || testParsed.ContainsKey("id"))
-            {
-                // LLM returned complete ElementGenerationResponse - parse the ability separately
-                string id = (testParsed.ContainsKey("Id") ? testParsed["Id"] : testParsed["id"]).GetString();
-                string name = (testParsed.ContainsKey("Name") ? testParsed["Name"] : testParsed["name"]).GetString();
-                string description = (testParsed.ContainsKey("Description") ? testParsed["Description"] : testParsed["description"]).GetString();
-                string colorHex = testParsed.ContainsKey("ColorHex") ? testParsed["ColorHex"].GetString()
-                    : (testParsed.ContainsKey("colorHex") ? testParsed["colorHex"].GetString() : "#808080");
-
-                var abilityKey = testParsed.ContainsKey("Ability") ? "Ability" : "ability";
-                var abilityJson = testParsed[abilityKey].GetRawText();
-
-                var validAbility = AbilityBuilder.FromLLMResponse(abilityJson);
-
-                GD.Print($"Generated element: {name}");
-                return new ElementGenerationResponse { Id = id, Name = name, Description = description, ColorHex = colorHex, Ability = validAbility };
+                GD.PrintErr($"Description too long ({elemDescription.Length} chars), truncating to 200");
+                elemDescription = elemDescription.Substring(0, 197) + "...";
             }
 
-            // Otherwise parse old format (name/description/color/ability)
-            string elemName = testParsed["name"].GetString();
-            string elemDescription = testParsed["description"].GetString();
-            string elemColorHex = testParsed.ContainsKey("color") ? testParsed["color"].GetString() : "#808080";
-
-            AbilityV2 elemAbility;
-            if (testParsed.ContainsKey("ability"))
-            {
-                var abilityJson = testParsed["ability"].GetRawText();
-                elemAbility = AbilityBuilder.FromLLMResponse(abilityJson);
-            }
-            else
+            if (elemAbility == null)
             {
                 elemAbility = CreateFallbackAbilityForElement(elemName);
             }
@@ -148,7 +132,6 @@ public class LLMClientV2
             GD.Print($"Generated element: {elemName}");
             return new ElementGenerationResponse
             {
-                Id = elemName.ToLower().Replace(" ", "_"),
                 Name = elemName,
                 Description = elemDescription,
                 ColorHex = elemColorHex,
@@ -165,7 +148,6 @@ public class LLMClientV2
             }
             return new ElementGenerationResponse
             {
-                Id = $"{element1Name}_{element2Name}".ToLower(),
                 Name = $"{element1Name}-{element2Name}",
                 Description = $"A fusion of {element1Name} and {element2Name}",
                 ColorHex = "#808080",
@@ -200,7 +182,8 @@ Examples of creative combinations:
 
 SUPPORTED ACTIONS (use a variety of these):
 1. ""spawn_melee"" - Melee attack with shaped hitbox ⚔️
-   args: shape (""arc""/""circle""/""rectangle""), range (0.5-3 tiles), arc_angle (30-360, for arc), width (0.2-2 tiles, for rectangle), windup_time (0-0.3), active_time (0.1-0.5)
+   args: shape (""arc""/""circle""/""rectangle""), range (0.5-3 tiles), arc_angle (30-360, for arc), width (0.2-2 tiles, for rectangle), windup_time (0-0.3), active_time (0.1-0.5),
+         movement (""stationary""/""dash""/""lunge""/""jump_smash""/""backstep""/""blink""/""teleport_strike""), move_distance (0-4 tiles), move_duration (0-0.6s)
    SHAPES: arc (cone/wedge), circle (360° AOE), rectangle (thrust/stab)
 
 2. ""spawn_projectile"" - Shoot projectile(s)
@@ -289,7 +272,7 @@ EXAMPLE 1 - Melee (Fire + Shadow):
         ""script"": [
           {{
             ""action"": ""spawn_melee"",
-            ""args"": {{""shape"": ""arc"", ""range"": 2.5, ""arc_angle"": 160}},
+            ""args"": {{""shape"": ""arc"", ""range"": 2.5, ""arc_angle"": 160, ""movement"": ""teleport_strike"", ""move_distance"": 2.5, ""move_duration"": 0.08}},
             ""on_hit"": [
               {{""action"": ""damage"", ""args"": {{""amount"": 35, ""element"": ""fire""}}}},
               {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 5}}}}
@@ -392,6 +375,199 @@ REMEMBER: Make it INTERESTING! Include status effects, area damage, chains, knoc
 Be CREATIVE with the element name and make sure the ability matches the element's theme!";
     }
 
+    private static string SanitizeJsonResponse(string jsonResponse)
+    {
+        if (string.IsNullOrWhiteSpace(jsonResponse))
+        {
+            return jsonResponse;
+        }
+
+        string trimmed = jsonResponse.Trim();
+
+        var extracted = ExtractFirstJsonValue(trimmed);
+        if (!string.IsNullOrEmpty(extracted))
+        {
+            trimmed = extracted;
+        }
+
+        if (!IsValidJson(trimmed))
+        {
+            if (TryRepairTruncatedJson(trimmed, out var repaired) && IsValidJson(repaired))
+            {
+                trimmed = repaired;
+            }
+        }
+
+        return trimmed;
+    }
+
+    private static bool IsValidJson(string json)
+    {
+        try
+        {
+            using var _ = JsonDocument.Parse(json);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ExtractFirstJsonValue(string input)
+    {
+        int start = -1;
+        for (int i = 0; i < input.Length; i++)
+        {
+            char c = input[i];
+            if (c == '{' || c == '[')
+            {
+                start = i;
+                break;
+            }
+        }
+
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var stack = new Stack<char>();
+        bool inString = false;
+        bool escape = false;
+
+        for (int i = start; i < input.Length; i++)
+        {
+            char c = input[i];
+            if (inString)
+            {
+                if (escape)
+                {
+                    escape = false;
+                    continue;
+                }
+                if (c == '\\')
+                {
+                    escape = true;
+                    continue;
+                }
+                if (c == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (c == '{' || c == '[')
+            {
+                stack.Push(c);
+                continue;
+            }
+
+            if (c == '}' || c == ']')
+            {
+                if (stack.Count > 0)
+                {
+                    stack.Pop();
+                }
+                if (stack.Count == 0)
+                {
+                    return input.Substring(start, i - start + 1);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryRepairTruncatedJson(string input, out string repaired)
+    {
+        repaired = null;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        string trimmed = input.Trim();
+        if (trimmed.Length == 0 || (trimmed[0] != '{' && trimmed[0] != '['))
+        {
+            return false;
+        }
+
+        var stack = new Stack<char>();
+        bool inString = false;
+        bool escape = false;
+
+        for (int i = 0; i < trimmed.Length; i++)
+        {
+            char c = trimmed[i];
+            if (inString)
+            {
+                if (escape)
+                {
+                    escape = false;
+                    continue;
+                }
+                if (c == '\\')
+                {
+                    escape = true;
+                    continue;
+                }
+                if (c == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (c == '{' || c == '[')
+            {
+                stack.Push(c);
+                continue;
+            }
+
+            if (c == '}' || c == ']')
+            {
+                if (stack.Count > 0)
+                {
+                    stack.Pop();
+                }
+            }
+        }
+
+        var sb = new StringBuilder(trimmed);
+
+        if (inString)
+        {
+            if (escape)
+            {
+                sb.Append("\\\\");
+            }
+            sb.Append('"');
+        }
+
+        while (stack.Count > 0)
+        {
+            char open = stack.Pop();
+            sb.Append(open == '{' ? '}' : ']');
+        }
+
+        repaired = sb.ToString();
+        return repaired != trimmed;
+    }
+
     private AbilityV2 CreateFallbackAbilityForElement(string elementName)
     {
         return new AbilityV2
@@ -437,10 +613,10 @@ Be CREATIVE with the element name and make sure the ability matches the element'
 
 /// <summary>
 /// Response from LLM element generation
+/// ID is assigned by database, not by LLM
 /// </summary>
 public class ElementGenerationResponse
 {
-    public string Id { get; set; }
     public string Name { get; set; }
     public string Description { get; set; }
     public string ColorHex { get; set; }
