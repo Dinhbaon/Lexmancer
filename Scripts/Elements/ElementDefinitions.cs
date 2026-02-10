@@ -2,6 +2,8 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using Lexmancer.Abilities.V2;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Elements;
 
@@ -24,7 +26,7 @@ public static class ElementDefinitions
 		var baseElements = CreateBaseElementsList();
 
 		// Check for existing base elements to avoid duplicates
-		var existingBaseElements = ElementRegistry.GetElementsByTier(1);
+		var existingBaseElements = ServiceLocator.Instance.Elements.GetElementsByTier(1);
 		var existingByPrimitive = new Dictionary<PrimitiveType, Element>();
 		foreach (var existing in existingBaseElements)
 		{
@@ -43,14 +45,14 @@ public static class ElementDefinitions
 			if (existingByPrimitive.TryGetValue(element.Primitive.Value, out var existing))
 			{
 				element.Id = existing.Id;
-				ElementRegistry.CacheElement(element);
+				ServiceLocator.Instance.Elements.CacheElement(element);
 				baseElementIds[element.Primitive.Value] = existing.Id;
 				GD.Print($"Updated base element: {element.Name} (ID: {existing.Id})");
 				continue;
 			}
 
 			// Cache element in database (this assigns the ID)
-			int id = ElementRegistry.CacheElement(element);
+			int id = ServiceLocator.Instance.Elements.CacheElement(element);
 
 			// Store the mapping from primitive type to database ID
 			baseElementIds[element.Primitive.Value] = id;

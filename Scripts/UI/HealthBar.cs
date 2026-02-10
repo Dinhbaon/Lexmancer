@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using Lexmancer.Combat;
+using Lexmancer.Core;
 
 namespace Lexmancer.UI;
 
@@ -21,11 +22,44 @@ public partial class HealthBar : Control
 		if (IsPlayerHealthBar)
 		{
 			CreatePlayerHealthBar();
+			SubscribeToEvents();
 		}
 		else
 		{
 			CreateEntityHealthBar();
 		}
+	}
+
+	public override void _ExitTree()
+	{
+		if (IsPlayerHealthBar)
+		{
+			UnsubscribeFromEvents();
+		}
+		base._ExitTree();
+	}
+
+	private void SubscribeToEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.PlayerHealthChanged += OnPlayerHealthChanged;
+			GD.Print("HealthBar subscribed to PlayerHealthChanged");
+		}
+	}
+
+	private void UnsubscribeFromEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.PlayerHealthChanged -= OnPlayerHealthChanged;
+		}
+	}
+
+	// EventBus callback
+	private void OnPlayerHealthChanged(float currentHealth, float maxHealth)
+	{
+		UpdateHealthBar(currentHealth, maxHealth);
 	}
 
 	/// <summary>
@@ -100,13 +134,9 @@ public partial class HealthBar : Control
 
 	private void ConnectToPlayerHealth()
 	{
-		var gameManager = GetNode<GameManager>("/root/Main/GameManager");
-		if (gameManager?.PlayerHealth != null)
-		{
-			healthComponent = gameManager.PlayerHealth;
-			healthComponent.OnHealthChanged += UpdateHealthBar;
-			UpdateHealthBar(healthComponent.Current, healthComponent.Max);
-		}
+		// No longer needed - we use EventBus now!
+		// Health updates come through OnPlayerHealthChanged event
+		// Initial health will be emitted by GameManager after player spawns
 	}
 
 	private void ConnectToEntityHealth()

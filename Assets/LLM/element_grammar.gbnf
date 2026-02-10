@@ -4,32 +4,36 @@ root ::= element
 # Top-level structure
 element ::= "{" ws "\"name\"" ws ":" ws string ws "," ws "\"description\"" ws ":" ws string ws "," ws "\"color\"" ws ":" ws hex-color ws "," ws "\"ability\"" ws ":" ws ability ws "}" ws
 
-ability ::= "{" ws "\"description\"" ws ":" ws string ws "," ws "\"primitives\"" ws ":" ws string-array ws "," ws "\"effects\"" ws ":" ws effect-array ws "," ws "\"cooldown\"" ws ":" ws number ws "}" ws
+ability ::= "{" ws "\"primitives\"" ws ":" ws string-array ws "," ws "\"effects\"" ws ":" ws effect-array ws "," ws "\"cooldown\"" ws ":" ws number ws "," ws "\"description\"" ws ":" ws string ws "}" ws
 
 effect-array ::= "[" ws effect-item (ws "," ws effect-item)* ws "]" ws | "[" ws "]" ws
 effect-item ::= "{" ws "\"script\"" ws ":" ws action-array ws "}" ws
 
-action-array ::= "[" ws action-item (ws "," ws action-item)* ws "]" ws | "[" ws "]" ws
-action-item ::= spawn-melee | spawn-projectile | spawn-area | spawn-beam | damage-action | heal-action | apply-status | knockback-action | chain-action | repeat-action
+action-array ::= "[" ws top-action (ws "," ws top-action)* ws "]" ws | "[" ws "]" ws
+top-action ::= spawn-melee | spawn-projectile | spawn-area | spawn-beam | chain-action | repeat-action
 
 # Action definitions
-spawn-melee ::= "{" ws "\"action\"" ws ":" ws "\"spawn_melee\"" ws "," ws "\"args\"" ws ":" ws melee-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? "}" ws
+spawn-melee ::= "{" ws "\"action\"" ws ":" ws "\"spawn_melee\"" ws "," ws "\"args\"" ws ":" ws melee-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? (ws "," ws "\"on_expire\"" ws ":" ws on-hit-array ws)? "}" ws
 
-melee-args ::= "{" ws "\"shape\"" ws ":" ws shape-value ws "," ws "\"range\"" ws ":" ws number ws (ws "," ws "\"arc_angle\"" ws ":" ws number ws)? (ws "," ws "\"width\"" ws ":" ws number ws)? (ws "," ws "\"windup_time\"" ws ":" ws number ws)? (ws "," ws "\"active_time\"" ws ":" ws number ws)? "}" ws
+melee-args ::= "{" ws "\"shape\"" ws ":" ws shape-value ws "," ws "\"range\"" ws ":" ws number ws (ws "," ws "\"arc_angle\"" ws ":" ws number ws)? (ws "," ws "\"width\"" ws ":" ws number ws)? (ws "," ws "\"windup_time\"" ws ":" ws number ws)? (ws "," ws "\"active_time\"" ws ":" ws number ws)? (ws "," ws "\"movement\"" ws ":" ws movement-value ws)? (ws "," ws "\"move_distance\"" ws ":" ws number ws)? (ws "," ws "\"move_duration\"" ws ":" ws number ws)? "}" ws
 
 shape-value ::= "\"arc\"" ws | "\"circle\"" ws | "\"rectangle\"" ws
 
-spawn-projectile ::= "{" ws "\"action\"" ws ":" ws "\"spawn_projectile\"" ws "," ws "\"args\"" ws ":" ws projectile-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? "}" ws
+# Movement types: stationary (no move), dash (invulnerable dash with trail), lunge (leap then attack),
+# jump_smash (leap then AOE), backstep (retreat), blink (instant teleport), teleport_strike (teleport to enemy)
+movement-value ::= "\"stationary\"" ws | "\"dash\"" ws | "\"lunge\"" ws | "\"jump_smash\"" ws | "\"backstep\"" ws | "\"blink\"" ws | "\"teleport_strike\"" ws
 
-projectile-args ::= "{" ws "\"count\"" ws ":" ws number ws "," ws "\"speed\"" ws ":" ws number ws (ws "," ws "\"pattern\"" ws ":" ws pattern-value ws)? (ws "," ws "\"acceleration\"" ws ":" ws number ws)? "}" ws
+spawn-projectile ::= "{" ws "\"action\"" ws ":" ws "\"spawn_projectile\"" ws "," ws "\"args\"" ws ":" ws projectile-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? (ws "," ws "\"on_expire\"" ws ":" ws on-hit-array ws)? "}" ws
 
-pattern-value ::= "\"single\"" ws | "\"spread\"" ws | "\"spiral\"" ws
+projectile-args ::= "{" ws "\"count\"" ws ":" ws number ws "," ws "\"speed\"" ws ":" ws number ws (ws "," ws "\"pattern\"" ws ":" ws pattern-value ws)? (ws "," ws "\"acceleration\"" ws ":" ws number ws)? (ws "," ws "\"piercing\"" ws ":" ws boolean ws)? (ws "," ws "\"max_pierce_hits\"" ws ":" ws number ws)? "}" ws
 
-spawn-area ::= "{" ws "\"action\"" ws ":" ws "\"spawn_area\"" ws "," ws "\"args\"" ws ":" ws area-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? "}" ws
+pattern-value ::= "\"single\"" ws | "\"spread\"" ws | "\"spiral\"" ws | "\"circle\"" ws
 
-area-args ::= "{" ws "\"radius\"" ws ":" ws number ws "," ws "\"duration\"" ws ":" ws number ws (ws "," ws "\"lingering_damage\"" ws ":" ws number ws)? (ws "," ws "\"growth_time\"" ws ":" ws number ws)? "}" ws
+spawn-area ::= "{" ws "\"action\"" ws ":" ws "\"spawn_area\"" ws "," ws "\"args\"" ws ":" ws area-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? (ws "," ws "\"on_expire\"" ws ":" ws on-hit-array ws)? "}" ws
 
-spawn-beam ::= "{" ws "\"action\"" ws ":" ws "\"spawn_beam\"" ws "," ws "\"args\"" ws ":" ws beam-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? "}" ws
+area-args ::= "{" ws "\"radius\"" ws ":" ws number ws "," ws "\"duration\"" ws ":" ws number ws (ws "," ws "\"lingering_damage\"" ws ":" ws number ws)? (ws "," ws "\"growth_time\"" ws ":" ws number ws)? (ws "," ws "\"damage\"" ws ":" ws number ws)? "}" ws
+
+spawn-beam ::= "{" ws "\"action\"" ws ":" ws "\"spawn_beam\"" ws "," ws "\"args\"" ws ":" ws beam-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? (ws "," ws "\"on_expire\"" ws ":" ws on-hit-array ws)? "}" ws
 
 beam-args ::= "{" ws "\"length\"" ws ":" ws number ws "," ws "\"width\"" ws ":" ws number ws "," ws "\"duration\"" ws ":" ws number ws (ws "," ws "\"travel_time\"" ws ":" ws number ws)? "}" ws
 
@@ -37,19 +41,19 @@ chain-action ::= "{" ws "\"action\"" ws ":" ws "\"chain_to_nearby\"" ws "," ws "
 
 chain-args ::= "{" ws "\"max_chains\"" ws ":" ws number ws "," ws "\"range\"" ws ":" ws number ws "}" ws
 
-repeat-action ::= "{" ws "\"action\"" ws ":" ws "\"repeat\"" ws "," ws "\"args\"" ws ":" ws repeat-args ws "}" ws
+repeat-action ::= "{" ws "\"action\"" ws ":" ws "\"repeat\"" ws "," ws "\"args\"" ws ":" ws repeat-args ws (ws "," ws "\"on_hit\"" ws ":" ws on-hit-array ws)? "}" ws
 
 repeat-args ::= "{" ws "\"count\"" ws ":" ws number ws "," ws "\"interval\"" ws ":" ws number ws "}" ws
 
 # On-hit actions
 on-hit-array ::= "[" ws on-hit-item (ws "," ws on-hit-item)* ws "]" ws | "[" ws "]" ws
-on-hit-item ::= damage-action | heal-action | apply-status | knockback-action | chain-action
+on-hit-item ::= damage-action | heal-action | apply-status | knockback-action | chain-action | spawn-melee | spawn-projectile | spawn-area | spawn-beam
 
 damage-action ::= "{" ws "\"action\"" ws ":" ws "\"damage\"" ws "," ws "\"args\"" ws ":" ws damage-args ws "}" ws
 
-damage-args ::= "{" ws "\"amount\"" ws ":" ws number ws (ws "," ws "\"element\"" ws ":" ws element-value ws)? "}" ws
+damage-args ::= "{" ws "\"amount\"" ws ":" ws number ws (ws "," ws "\"element\"" ws ":" ws element-value ws)? (ws "," ws "\"area_radius\"" ws ":" ws number ws)? "}" ws
 
-element-value ::= "\"fire\"" ws | "\"water\"" ws | "\"earth\"" ws | "\"lightning\"" ws | "\"poison\"" ws | "\"wind\"" ws | "\"shadow\"" ws | "\"light\"" ws
+element-value ::= "\"fire\"" ws | "\"water\"" ws | "\"earth\"" ws | "\"lightning\"" ws | "\"poison\"" ws | "\"wind\"" ws | "\"shadow\"" ws | "\"light\"" ws | "\"neutral\"" ws
 
 heal-action ::= "{" ws "\"action\"" ws ":" ws "\"heal\"" ws "," ws "\"args\"" ws ":" ws heal-args ws "}" ws
 
@@ -65,7 +69,7 @@ knockback-action ::= "{" ws "\"action\"" ws ":" ws "\"knockback\"" ws "," ws "\"
 
 knockback-args ::= "{" ws "\"force\"" ws ":" ws number ws "," ws "\"direction\"" ws ":" ws direction-value ws "}" ws
 
-direction-value ::= "\"away\"" ws | "\"towards\"" ws
+direction-value ::= "\"away\"" ws | "\"towards\"" ws | "\"towards_center\"" ws
 
 # JSON primitives
 hex-color ::= "\"#" [0-9A-Fa-f] [0-9A-Fa-f] [0-9A-Fa-f] [0-9A-Fa-f] [0-9A-Fa-f] [0-9A-Fa-f] "\"" ws

@@ -30,6 +30,8 @@ public static class AbilityBuilder
                 GeneratedAt = GetLongProperty(root, "generated_at", DateTimeOffset.UtcNow.ToUnixTimeSeconds())
             };
 
+            ability.EnsureDescription();
+
             // Validate
             ValidateAbility(ability);
 
@@ -112,8 +114,10 @@ public static class AbilityBuilder
             action.Args = ParseDictionary(argsElement);
         }
 
-        // Parse nested on_hit actions
-        if (TryGetPropertyIgnoreCase(actionElement, "on_hit", out var onHitArray))
+        // Parse nested on_hit actions (try multiple formats: on_hit, onHit, OnHit)
+        if (TryGetPropertyIgnoreCase(actionElement, "on_hit", out var onHitArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "onhit", out onHitArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "OnHit", out onHitArray))
         {
             foreach (var hitAction in onHitArray.EnumerateArray())
             {
@@ -121,8 +125,10 @@ public static class AbilityBuilder
             }
         }
 
-        // Parse on_expire actions
-        if (TryGetPropertyIgnoreCase(actionElement, "on_expire", out var onExpireArray))
+        // Parse on_expire actions (try multiple formats: on_expire, onExpire, OnExpire)
+        if (TryGetPropertyIgnoreCase(actionElement, "on_expire", out var onExpireArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "onexpire", out onExpireArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "OnExpire", out onExpireArray))
         {
             foreach (var expireAction in onExpireArray.EnumerateArray())
             {

@@ -4,85 +4,49 @@ using System.Threading.Tasks;
 using Lexmancer.Elements;
 using Lexmancer.Systems;
 using Lexmancer.UI;
-using Lexmancer.Config;
-using Lexmancer.Combat;
 using Lexmancer.Abilities.LLM;
+using Lexmancer.Abilities.V2;
+using Lexmancer.Core;
+using Lexmancer.Combat;
+using Lexmancer.Services;
 
 public partial class Main : Node2D
 {
-	[Export] public bool UseLLM { get; set; } = false;
+	[Export] public bool UseLLM { get; set; } = true;
 
 	private CharacterBody2D player;
 	private GameManager gameManager;
 	private Camera2D camera;
-	private LLMElementGenerator llmGenerator;
+	private LLMService llmService;
 
 	public override void _Ready()
 	{
 		GD.Print("=== Starting Action Roguelike ===");
 
 		// Set configuration
-		GameConfig.UseLLM = UseLLM;
-		GameConfig.LLMModelName = "granite-3.1-3b-a800m-instruct-Q4_K_M.gguf";
-		GameConfig.PrintConfig();
+		var config = ServiceLocator.Instance.Config;
+		UseLLM = true;
+		config.SetUseLLM(UseLLM);
+		config.SetLLMModelName("granite-3.1-3b-a800m-instruct-Q4_K_M.gguf");
+		config.PrintConfig();
 
-		// If using LLM with LLamaSharp direct inference, load model first
-		if (GameConfig.UseLLM && GameConfig.UseLLamaSharpDirect)
-		{
-			CallDeferred(nameof(InitializeModelAndContinue));
-		}
-		else
-		{
-			InitializeGameSystems();
-		}
-	}
-
-	/// <summary>
-	/// Load LLamaSharp model asynchronously, then continue with game initialization
-	/// </summary>
-	private async void InitializeModelAndContinue()
-	{
-		try
-		{
-			var modelManager = new ModelManager();
-			modelManager.Name = "ModelManager";
-			AddChild(modelManager);
-
-			GD.Print("Loading LLM model from bundled assets...");
-			bool success = await modelManager.InitializeAsync();
-
-			if (!success)
-			{
-				GD.PrintErr("Model loading failed, falling back to Ollama HTTP mode");
-				GameConfig.UseLLamaSharpDirect = false;
-			}
-			else
-			{
-				GD.Print("LLM model loaded successfully!");
-			}
-		}
-		catch (Exception ex)
-		{
-			GD.PrintErr($"Model initialization error: {ex.Message}");
-			GameConfig.UseLLamaSharpDirect = false;
-		}
-
-		InitializeGameSystems();
+		CallDeferred(nameof(InitializeGameSystems));
 	}
 
 	/// <summary>
 	/// Initialize element system, LLM generator, and game world
+	/// NO MORE async void! LLM loads in background automatically.
 	/// </summary>
 	private void InitializeGameSystems()
 	{
 		// Initialize element system
-		ElementRegistry.Initialize("player_001");
+		ServiceLocator.Instance.Elements.Initialize("player_001");
 
-		// Initialize LLM generator if enabled
-		if (GameConfig.UseLLM)
-		{
-			llmGenerator = new LLMElementGenerator("player_001", useLLM: true);
-		}
+		// Initialize shared LLM service (non-blocking! loads in background)
+		llmService = new LLMService();
+		llmService.Name = "LLMService";
+		AddChild(llmService);
+		// LLM service initializes itself in _Ready(), no await needed!
 
 		// Load hardcoded elements
 		LoadHardcodedElements();
@@ -146,7 +110,7 @@ public partial class Main : Node2D
 		var baseElementIds = ElementDefinitions.InitializeBaseElements();
 
 		GD.Print($"Loaded {baseElementIds.Count} base elements");
-		ElementRegistry.PrintStats();
+		ServiceLocator.Instance.Elements.PrintStats();
 	}
 
 	/// <summary>
@@ -198,7 +162,9 @@ public partial class Main : Node2D
 	public override void _ExitTree()
 	{
 		// Cleanup element system
-		ElementRegistry.Shutdown();
+		ServiceLocator.Instance.Elements.Shutdown();
+		// Pool cleanup
+		EffectInterpreterPool.Clear(this);
 		// ModelManager cleans up in its own _ExitTree
 		base._ExitTree();
 	}

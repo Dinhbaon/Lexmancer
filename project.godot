@@ -25,3 +25,11 @@ window/stretch/mode="canvas_items"
 [dotnet]
 
 project/assembly_name="Lexmancer"
+
+[autoload]
+
+EventBus="*res://Scripts/Core/EventBus.cs"
+ElementService="*res://Scripts/Services/ElementService.cs"
+ConfigService="*res://Scripts/Services/ConfigService.cs"
+CombatService="*res://Scripts/Services/CombatService.cs"
+ServiceLocator="*res://Scripts/Core/ServiceLocator.cs"

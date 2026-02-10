@@ -2,6 +2,8 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using Lexmancer.Elements;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.UI;
 
@@ -30,13 +32,61 @@ public partial class ElementHotbar : Control
 		GrowHorizontal = GrowDirection.End;
 		GrowVertical = GrowDirection.Begin;
 
-		// Wait for game manager to be ready
+		// Subscribe to EventBus
+		SubscribeToEvents();
+
+		// Wait for initialization
 		CallDeferred(nameof(Initialize));
+	}
+
+	public override void _ExitTree()
+	{
+		UnsubscribeFromEvents();
+		base._ExitTree();
+	}
+
+	private void SubscribeToEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ElementAdded += OnElementChanged;
+			EventBus.Instance.ElementConsumed += OnElementChanged;
+			EventBus.Instance.ElementsCombined += OnElementsCombined;
+			EventBus.Instance.HotbarEquipmentChanged += OnHotbarEquipmentChanged;
+			GD.Print("ElementHotbar subscribed to EventBus");
+		}
+	}
+
+	private void UnsubscribeFromEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ElementAdded -= OnElementChanged;
+			EventBus.Instance.ElementConsumed -= OnElementChanged;
+			EventBus.Instance.ElementsCombined -= OnElementsCombined;
+			EventBus.Instance.HotbarEquipmentChanged -= OnHotbarEquipmentChanged;
+		}
+	}
+
+	// Event handlers
+	private void OnElementChanged(int elementId, int count)
+	{
+		RefreshHotbar();
+	}
+
+	private void OnElementsCombined(int element1Id, int element2Id, int newElementId)
+	{
+		RefreshHotbar();
+	}
+
+	private void OnHotbarEquipmentChanged(int slotIndex, int elementId)
+	{
+		RefreshHotbar();
 	}
 
 	private void Initialize()
 	{
-		// Get inventory from GameManager
+		// Get inventory from GameManager (temporary - will be refactored to service)
 		var gameManager = GetNode<GameManager>("/root/Main/GameManager");
 		if (gameManager != null)
 		{
@@ -44,13 +94,13 @@ public partial class ElementHotbar : Control
 			player = gameManager.Player;
 			worldNode = GetNode("/root/Main");
 
-			// Subscribe to inventory changes
-			inventory.OnElementAdded += (id, count) => RefreshHotbar();
-			inventory.OnElementConsumed += (id, count) => RefreshHotbar();
-			inventory.OnElementCombined += (id) => RefreshHotbar();
-			inventory.OnEquipmentChanged += RefreshHotbar;
-
 			RefreshHotbar();
+		}
+		else
+		{
+			// Fallback: find player and world directly
+			player = GetTree().GetFirstNodeInGroup("player");
+			worldNode = GetTree().Root.GetNode("Main");
 		}
 	}
 
@@ -75,18 +125,21 @@ public partial class ElementHotbar : Control
 			{
 				activeSlot = 0;
 				RefreshHotbar();
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarSlotSelected, 0);
 				GD.Print("Selected element slot 1");
 			}
 			else if (keyEvent.Keycode == Key.Key2 && equippedElements.Count > 1)
 			{
 				activeSlot = 1;
 				RefreshHotbar();
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarSlotSelected, 1);
 				GD.Print("Selected element slot 2");
 			}
 			else if (keyEvent.Keycode == Key.Key3 && equippedElements.Count > 2)
 			{
 				activeSlot = 2;
 				RefreshHotbar();
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarSlotSelected, 2);
 				GD.Print("Selected element slot 3");
 			}
 		}
@@ -125,7 +178,7 @@ public partial class ElementHotbar : Control
 	private Button CreateElementButton(int elementId, int count, int slotIndex)
 	{
 		// Get element data
-		Element element = ElementRegistry.GetElement(elementId);
+		Element element = ServiceLocator.Instance.Elements.GetElement(elementId);
 
 		var button = new Button();
 		button.CustomMinimumSize = new Vector2(100, 50);
@@ -135,7 +188,7 @@ public partial class ElementHotbar : Control
 		// Set text with key binding
 		string keyLabel = $"[{slotIndex + 1}]";
 		string activeMarker = (slotIndex == activeSlot) ? "► " : "";
-		button.Text = $"{activeMarker}{keyLabel} {element?.Name ?? elementId.ToString()}\n∞"; // Infinity symbol for unlimited
+		button.Text = $"{activeMarker}{keyLabel} {element?.Name ?? "Unknown Element"}\n∞"; // Infinity symbol for unlimited
 
 		// Set color based on element and highlight if active
 		if (element != null)
@@ -170,7 +223,7 @@ public partial class ElementHotbar : Control
 		int elementId = equippedElements[slotIndex];
 
 		// Get element
-		Element element = ElementRegistry.GetElement(elementId);
+		Element element = ServiceLocator.Instance.Elements.GetElement(elementId);
 
 		if (element?.Ability == null)
 		{
@@ -193,17 +246,9 @@ public partial class ElementHotbar : Control
 
 		// Get direction from player position to mouse position
 		Vector2 playerPos = player is Node2D p ? p.GlobalPosition : Vector2.Zero;
-		Vector2 mousePos = GetViewport().GetMousePosition();
 
-		// Convert screen position to world position
-		if (GetViewport().GetCamera2D() != null)
-		{
-			// Get camera's global position and adjust mouse position
-			var camera = GetViewport().GetCamera2D();
-			Vector2 cameraPos = camera.GlobalPosition;
-			Vector2 viewportSize = GetViewport().GetVisibleRect().Size;
-			mousePos = cameraPos + (mousePos - viewportSize / 2) * camera.Zoom;
-		}
+		// Use Godot's built-in method to get world mouse position
+		Vector2 mousePos = GetGlobalMousePosition();
 
 		Vector2 direction = (mousePos - playerPos).Normalized();
 
@@ -215,6 +260,10 @@ public partial class ElementHotbar : Control
 		GD.Print($"✨ Using {element.Name} ability");
 		GD.Print($"   Ability description: {element.Ability.Description}");
 		GD.Print($"   Effects count: {element.Ability.Effects?.Count ?? 0}");
+
+		// Emit event before casting
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.PlayerCastAbility, elementId);
+
 		element.Ability.Execute(
 			playerPos,
 			direction,

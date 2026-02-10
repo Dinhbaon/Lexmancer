@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using Lexmancer.Enemies;
+using Lexmancer.Core;
 
 namespace Lexmancer.Systems;
 
@@ -13,21 +14,20 @@ public partial class WaveSpawner : Node2D
 	[Export] public float SpawnRadius { get; set; } = 300f;
 
 	private Random random = new Random();
-	private GameManager gameManager;
 	private Node2D player;
 
 	public override void _Ready()
 	{
-		// Get game manager and player
+		// Get player reference
 		CallDeferred(nameof(Initialize));
 	}
 
 	private void Initialize()
 	{
-		gameManager = GetNode<GameManager>("/root/Main/GameManager");
-		player = gameManager?.Player;
+		// Find player directly from scene tree
+		player = GetTree().GetFirstNodeInGroup("player") as Node2D;
 
-		GD.Print($"WaveSpawner Initialize - GameManager: {gameManager != null}, Player: {player != null}");
+		GD.Print($"WaveSpawner Initialize - Player: {player != null}");
 
 		// Spawn initial wave (even if player is null, use default position)
 		SpawnWave();
@@ -36,6 +36,9 @@ public partial class WaveSpawner : Node2D
 	private void SpawnWave()
 	{
 		GD.Print($"Spawning wave of {EnemyCount} enemies...");
+
+		// Emit wave started event
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.WaveStarted, 1, EnemyCount);
 
 		for (int i = 0; i < EnemyCount; i++)
 		{
@@ -55,8 +58,8 @@ public partial class WaveSpawner : Node2D
 		// Add to scene
 		GetParent().AddChild(enemy);
 
-		// Notify game manager
-		gameManager?.OnEnemySpawned();
+		// Emit event instead of calling GameManager directly
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.EnemySpawned, enemy);
 
 		GD.Print($"Enemy spawned at {spawnPos}");
 	}

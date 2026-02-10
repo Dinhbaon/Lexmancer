@@ -1,40 +1,33 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 using Lexmancer.Abilities.Visuals;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.Execution;
 
 /// <summary>
 /// Manages status effects on entities
+/// Now emits EventBus events for status application/expiration
+/// NO LONGER A SINGLETON - Managed by CombatService
+/// Access via ServiceLocator.Combat.StatusEffects
 /// </summary>
 public partial class StatusEffectManager : Node
 {
-    public static StatusEffectManager Instance { get; private set; }
-
     // Entity -> Status -> Stack count
     private Dictionary<Node, Dictionary<StatusEffectType, StatusEffect>> activeEffects = new();
 
     // Entity -> Visual component for status effects
     private Dictionary<Node, StatusEffectVisuals> entityVisuals = new();
 
-    public override void _EnterTree()
-    {
-        if (Instance == null)
-        {
-            Instance = this;
-        }
-        else
-        {
-            GD.PrintErr("Multiple StatusEffectManager instances detected!");
-        }
-    }
+    // Entity -> Knockback velocity (decays over time)
+    private Dictionary<Node, KnockbackData> activeKnockbacks = new();
 
-    public override void _ExitTree()
+    private class KnockbackData
     {
-        if (Instance == this)
-        {
-            Instance = null;
-        }
+        public Vector2 Velocity { get; set; }
+        public float TimeRemaining { get; set; }
     }
 
     public class StatusEffect
@@ -47,6 +40,9 @@ public partial class StatusEffectManager : Node
 
     public override void _Process(double delta)
     {
+        // Update knockback velocities
+        UpdateKnockbacks((float)delta);
+
         // Update all active effects
         var toRemove = new List<(Node, StatusEffectType)>();
         var invalidEntities = new List<Node>();
@@ -74,7 +70,10 @@ public partial class StatusEffectManager : Node
                 if (status.TimeRemaining <= 0)
                 {
                     toRemove.Add((entity, statusKv.Key));
-                    GD.Print($"Status expired: {StatusEffectTypeUtil.ToId(statusKv.Key)} on {entity.Name}");
+                    string statusId = StatusEffectTypeUtil.ToId(statusKv.Key);
+                    GD.Print($"Status expired: {statusId} on {entity.Name}");
+                    // Emit expiration event
+                    EventBus.Instance?.EmitSignal(EventBus.SignalName.StatusEffectExpired, entity, statusId);
                 }
             }
         }
@@ -143,17 +142,17 @@ public partial class StatusEffectManager : Node
             {
                 case StatusEffectType.Burning:
                     // 3 damage per second
-                    Combat.DamageSystem.ApplyDamage(entity, 3f * delta, "fire");
+                    ServiceLocator.Instance.Combat.ApplyDamage(entity, 3f * delta, "fire");
                     break;
 
                 case StatusEffectType.Poisoned:
                     // 2 damage per second
-                    Combat.DamageSystem.ApplyDamage(entity, 2f * delta, "poison");
+                    ServiceLocator.Instance.Combat.ApplyDamage(entity, 2f * delta, "poison");
                     break;
 
                 case StatusEffectType.Shocked:
                     // 1 damage per second + small random knockback
-                    Combat.DamageSystem.ApplyDamage(entity, 1f * delta, "lightning");
+                    ServiceLocator.Instance.Combat.ApplyDamage(entity, 1f * delta, "lightning");
                     break;
 
                 // Movement-based effects are now handled via ApplyMovementEffects()
@@ -169,6 +168,90 @@ public partial class StatusEffectManager : Node
     }
 
     /// <summary>
+    /// Update and decay knockback velocities
+    /// </summary>
+    private void UpdateKnockbacks(float delta)
+    {
+        var toRemove = new List<Node>();
+
+        foreach (var kv in activeKnockbacks)
+        {
+            var entity = kv.Key;
+            var knockback = kv.Value;
+
+            // Check if entity is still valid
+            if (!GodotObject.IsInstanceValid(entity) || entity.IsQueuedForDeletion())
+            {
+                toRemove.Add(entity);
+                continue;
+            }
+
+            // Decay knockback over time
+            knockback.TimeRemaining -= delta;
+
+            if (knockback.TimeRemaining <= 0)
+            {
+                toRemove.Add(entity);
+            }
+        }
+
+        // Clean up expired knockbacks
+        foreach (var entity in toRemove)
+        {
+            activeKnockbacks.Remove(entity);
+        }
+    }
+
+    /// <summary>
+    /// Apply knockback to an entity
+    /// This creates a sustained knockback that decays over time
+    /// </summary>
+    public void ApplyKnockback(Node entity, Vector2 direction, float force, float duration = 0.3f)
+    {
+        if (!GodotObject.IsInstanceValid(entity))
+            return;
+
+        var velocity = direction.Normalized() * force;
+
+        if (activeKnockbacks.ContainsKey(entity))
+        {
+            // Add to existing knockback
+            var existing = activeKnockbacks[entity];
+            existing.Velocity += velocity;
+            existing.TimeRemaining = Mathf.Max(existing.TimeRemaining, duration);
+        }
+        else
+        {
+            // Create new knockback
+            activeKnockbacks[entity] = new KnockbackData
+            {
+                Velocity = velocity,
+                TimeRemaining = duration
+            };
+        }
+
+        GD.Print($"Applied knockback: {velocity} for {duration}s to {entity.Name}");
+
+        // Emit event
+        EventBus.Instance?.EmitSignal(EventBus.SignalName.KnockbackApplied, entity, direction, force);
+    }
+
+    /// <summary>
+    /// Get current knockback velocity for an entity
+    /// </summary>
+    public Vector2 GetKnockbackVelocity(Node entity)
+    {
+        if (activeKnockbacks.ContainsKey(entity))
+        {
+            var knockback = activeKnockbacks[entity];
+            // Decay velocity over time for smooth deceleration
+            float t = knockback.TimeRemaining / 0.3f; // Assume 0.3s default duration
+            return knockback.Velocity * t;
+        }
+        return Vector2.Zero;
+    }
+
+    /// <summary>
     /// Apply movement-based status effects to an entity
     /// Call this from the entity's _PhysicsProcess after calculating intended direction
     /// </summary>
@@ -180,10 +263,14 @@ public partial class StatusEffectManager : Node
         if (body == null || !GodotObject.IsInstanceValid(body))
             return;
 
+        // Always apply knockback velocity first (even if stunned/frozen)
+        Vector2 knockbackVel = GetKnockbackVelocity(body);
+
         // Check for complete movement lockdown
         if (HasStatus(body, StatusEffectType.Frozen) || HasStatus(body, StatusEffectType.Stunned))
         {
-            body.Velocity = Vector2.Zero;
+            // Still apply knockback, but no AI movement
+            body.Velocity = knockbackVel;
             return;
         }
 
@@ -209,8 +296,9 @@ public partial class StatusEffectManager : Node
             speedMultiplier *= 0.75f;
         }
 
-        // Apply final velocity
-        body.Velocity = direction * entity.GetBaseMoveSpeed() * speedMultiplier;
+        // Apply final velocity (AI movement + knockback)
+        Vector2 aiVelocity = direction * entity.GetBaseMoveSpeed() * speedMultiplier;
+        body.Velocity = aiVelocity + knockbackVel;
     }
 
     /// <summary>
@@ -317,13 +405,17 @@ public partial class StatusEffectManager : Node
                 Stacks = 1,
                 CanStack = canStack
             };
-            GD.Print($"Applied {StatusEffectTypeUtil.ToId(status)} to {entity.Name}");
+            string statusId = StatusEffectTypeUtil.ToId(status);
+            GD.Print($"Applied {statusId} to {entity.Name}");
+
+            // Emit event
+            EventBus.Instance?.EmitSignal(EventBus.SignalName.StatusEffectApplied, entity, statusId, duration);
 
             // Create visual effect
             var visuals = GetOrCreateVisuals(entity);
             if (visuals != null)
             {
-                visuals.AddStatusVisual(StatusEffectTypeUtil.ToId(status), duration);
+                visuals.AddStatusVisual(statusId, duration);
             }
         }
     }
@@ -408,5 +500,81 @@ public partial class StatusEffectManager : Node
         }
 
         GD.Print($"Cleared all statuses from {entity.Name}");
+    }
+
+    // ==================== COMBATSERVICE COMPATIBILITY ====================
+
+    /// <summary>
+    /// Apply effect (alias for ApplyStatus for CombatService compatibility)
+    /// </summary>
+    public void ApplyEffect(Node target, StatusEffectType type, float duration, int stacks = 1, Node source = null)
+    {
+        ApplyStatus(target, type, duration, canStack: stacks > 1);
+        // TODO: Handle stacks parameter if needed
+    }
+
+    /// <summary>
+    /// Remove effect (alias for ClearStatus for CombatService compatibility)
+    /// </summary>
+    public void RemoveEffect(Node target, StatusEffectType type)
+    {
+        ClearStatus(target, type);
+    }
+
+    /// <summary>
+    /// Has effect (alias for HasStatus for CombatService compatibility)
+    /// </summary>
+    public bool HasEffect(Node target, StatusEffectType type)
+    {
+        return HasStatus(target, type);
+    }
+
+    /// <summary>
+    /// Clear all effects (alias for ClearAllStatuses for CombatService compatibility)
+    /// </summary>
+    public void ClearAllEffects(Node target)
+    {
+        ClearAllStatuses(target);
+    }
+
+    /// <summary>
+    /// Get movement speed multiplier based on active status effects
+    /// </summary>
+    public float GetMovementMultiplier(Node target)
+    {
+        float multiplier = 1.0f;
+
+        // Frozen or Stunned = no movement
+        if (HasStatus(target, StatusEffectType.Frozen) || HasStatus(target, StatusEffectType.Stunned))
+        {
+            return 0.0f;
+        }
+
+        // Slowed - reduce speed by 50%
+        if (HasStatus(target, StatusEffectType.Slowed))
+        {
+            multiplier *= 0.5f;
+        }
+
+        // Weakened - reduce speed by 25% (can stack with slowed)
+        if (HasStatus(target, StatusEffectType.Weakened))
+        {
+            multiplier *= 0.75f;
+        }
+
+        return multiplier;
+    }
+
+    /// <summary>
+    /// Get count of all active status effects across all entities
+    /// </summary>
+    public int GetActiveEffectCount()
+    {
+        int count = 0;
+        foreach (var entityEffects in activeEffects.Values)
+        {
+            count += entityEffects.Count;
+        }
+        return count;
     }
 }

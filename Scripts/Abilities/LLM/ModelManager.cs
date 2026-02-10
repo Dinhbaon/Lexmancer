@@ -6,7 +6,8 @@ using System.Threading.Tasks;
 using LLama;
 using LLama.Common;
 using LLama.Sampling;
-using Lexmancer.Config;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.LLM;
 
@@ -16,7 +17,9 @@ namespace Lexmancer.Abilities.LLM;
 /// </summary>
 public partial class ModelManager : Node
 {
-	private static ModelManager _instance;
+    private ConfigService Config => ServiceLocator.Instance.Config;
+
+    private static ModelManager _instance;
 	public static ModelManager Instance => _instance;
 
 	private LLamaWeights _model;
@@ -52,17 +55,17 @@ public partial class ModelManager : Node
 			}
 
 			GD.Print($"Loading GGUF model from: {modelPath}");
-			GD.Print($"  Context size: {GameConfig.LLMContextSize}");
-			GD.Print($"  Batch size: {GameConfig.LLMBatchSize}");
-			GD.Print($"  GPU layers: {GameConfig.LLMGpuLayerCount}");
-			GD.Print($"  Threads: {GameConfig.LLMThreadCount}");
+			GD.Print($"  Context size: {Config.LLMContextSize}");
+			GD.Print($"  Batch size: {Config.LLMBatchSize}");
+			GD.Print($"  GPU layers: {Config.LLMGpuLayerCount}");
+			GD.Print($"  Threads: {Config.LLMThreadCount}");
 
 			_modelParams = new ModelParams(modelPath)
 			{
-				ContextSize = (uint)GameConfig.LLMContextSize,
-				BatchSize = (uint)GameConfig.LLMBatchSize,
-				GpuLayerCount = GameConfig.LLMGpuLayerCount,
-				Threads = GameConfig.LLMThreadCount,
+				ContextSize = (uint)Config.LLMContextSize,
+				BatchSize = (uint)Config.LLMBatchSize,
+				GpuLayerCount = Config.LLMGpuLayerCount,
+				Threads = Config.LLMThreadCount,
 			};
 
 			_model = await LLamaWeights.LoadFromFileAsync(_modelParams);
@@ -97,19 +100,17 @@ public partial class ModelManager : Node
 			// ALWAYS use grammar constraint - guarantees valid JSON
 			var samplingPipeline = new DefaultSamplingPipeline
 			{
-				Temperature = GameConfig.LLMTemperature,
-				RepeatPenalty = GameConfig.LLMRepeatPenalty,
-				PresencePenalty = 0.5f, 
-				FrequencyPenalty = 0.5f,
+				Temperature = Config.LLMTemperature,
+				RepeatPenalty = Config.LLMRepeatPenalty,
 				Grammar = new Grammar(GetElementGrammar(), "root")
 			};
 
-			GD.Print($"Using JSON grammar constraint with repeat_penalty={GameConfig.LLMRepeatPenalty}");
+			GD.Print($"Using JSON grammar constraint with repeat_penalty={Config.LLMRepeatPenalty}");
 
 			var inferenceParams = new InferenceParams
 			{
 				SamplingPipeline = samplingPipeline,
-				MaxTokens = GameConfig.LLMMaxTokens,
+				MaxTokens = Config.LLMMaxTokens,
 				AntiPrompts = new[] { "}" }
 			};
 
@@ -170,19 +171,19 @@ public partial class ModelManager : Node
 	private string ResolveModelPath()
 	{
 		// 1. User-provided override path (full path)
-		if (!string.IsNullOrEmpty(GameConfig.LLMModelPath))
+		if (!string.IsNullOrEmpty(Config.LLMModelPath))
 		{
-			if (File.Exists(GameConfig.LLMModelPath))
+			if (File.Exists(Config.LLMModelPath))
 			{
-				GD.Print($"Using user-provided model: {GameConfig.LLMModelPath}");
-				return GameConfig.LLMModelPath;
+				GD.Print($"Using user-provided model: {Config.LLMModelPath}");
+				return Config.LLMModelPath;
 			}
-			GD.PrintErr($"User-provided model not found: {GameConfig.LLMModelPath}");
+			GD.PrintErr($"User-provided model not found: {Config.LLMModelPath}");
 		}
 
 		// 2. Get model name from config or environment variable
 		var modelName = System.Environment.GetEnvironmentVariable("LLM_MODEL_NAME")
-		                ?? GameConfig.LLMModelName;
+		                ?? Config.LLMModelName;
 
 		if (string.IsNullOrEmpty(modelName))
 		{

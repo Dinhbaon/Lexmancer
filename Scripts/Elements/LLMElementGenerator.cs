@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Lexmancer.Abilities.V2;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Elements;
 
@@ -14,36 +16,50 @@ namespace Lexmancer.Elements;
 /// </summary>
 public class LLMElementGenerator
 {
-	private readonly bool useLLM;
-	private readonly LLMClientV2 llmClient;
+    private bool useLLM;
+    private readonly LLMClientV2 llmClient;
 
-	public LLMElementGenerator(
-		string playerId = "player_001",
-		bool useLLM = true,
-		string llmBaseUrl = "http://localhost:11434",
-		string llmModel = "qwen2.5:7b")
-	{
-		this.useLLM = useLLM;
+    public LLMElementGenerator(
+        string playerId = "player_001",
+        bool useLLM = true,
+        string llmBaseUrl = "http://localhost:11434",
+        string llmModel = "qwen2.5:7b",
+        LLMClientV2 llmClient = null)
+    {
+        this.useLLM = useLLM;
 
-		if (useLLM)
-		{
-			llmClient = new LLMClientV2(llmBaseUrl, llmModel);
-			GD.Print($"LLMElementGenerator initialized with LLM enabled ({llmModel})");
-		}
-		else
-		{
-			GD.Print("LLMElementGenerator initialized with LLM disabled (using fallbacks)");
-		}
-	}
+        // Allow DI of a shared client so transport selection is centralized.
+        if (llmClient != null)
+        {
+            this.llmClient = llmClient;
+            if (useLLM)
+                GD.Print("LLMElementGenerator using injected client");
+        }
+        else if (useLLM)
+        {
+            this.llmClient = new LLMClientV2(llmBaseUrl, llmModel);
+            GD.Print($"LLMElementGenerator initialized with LLM enabled ({llmModel})");
+        }
+
+        if (!useLLM)
+        {
+            GD.Print("LLMElementGenerator initialized with LLM disabled (using fallbacks)");
+        }
+    }
+
+    /// <summary>
+    /// Enable/disable LLM usage at runtime.
+    /// </summary>
+    public void SetUseLLM(bool enabled) => useLLM = enabled;
 
 	/// <summary>
-	/// Check if a combination has been generated before (cached in ElementRegistry)
+	/// Check if a combination has been generated before (cached in ElementService)
 	/// Returns the cached element if found, otherwise null
 	/// </summary>
 	public Element GetCachedCombination(int element1Id, int element2Id)
 	{
-		// Check ElementRegistry for all previously generated combinations
-		var allElements = ElementRegistry.GetAllElements();
+		// Check ElementService for all previously generated combinations
+		var allElements = ServiceLocator.Instance.Elements.GetAllElements();
 
 		foreach (var element in allElements)
 		{
@@ -78,9 +94,9 @@ public class LLMElementGenerator
 
 		try
 		{
-			// Get elements from registry
-			Element elem1 = ElementRegistry.GetElement(element1Id);
-			Element elem2 = ElementRegistry.GetElement(element2Id);
+			// Get elements from service
+			Element elem1 = ServiceLocator.Instance.Elements.GetElement(element1Id);
+			Element elem2 = ServiceLocator.Instance.Elements.GetElement(element2Id);
 
 			if (elem1 == null || elem2 == null)
 			{

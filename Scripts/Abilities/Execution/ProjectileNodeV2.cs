@@ -19,13 +19,21 @@ public partial class ProjectileNodeV2 : Area2D
     public List<EffectAction> OnHitActions { get; set; } = new();
     public EffectContext Context { get; set; }
 
+    // Piercing support
+    public bool Piercing { get; set; } = false;
+    public int MaxPierceHits { get; set; } = 3; // Max enemies to pierce through
+
     private float timeAlive = 0f;
     private float currentSpeed = 0f; // Current speed (for acceleration)
-    private bool hasHit = false;
+    private HashSet<ulong> hitEnemies = new(); // Track which enemies were hit (for piercing)
     private GpuParticles2D trailParticles;
 
     public override void _Ready()
     {
+        // Set collision layers explicitly (layer 2 = abilities, mask 1 = enemies)
+        CollisionLayer = 2; // Don't collide with other abilities
+        CollisionMask = 1;  // Detect layer 1 (enemies and player are on layer 1)
+
         GD.Print($"[ProjectileNodeV2._Ready] Starting initialization");
         GD.Print($"   GlobalPosition: {GlobalPosition}");
         GD.Print($"   Direction: {Direction}");
@@ -67,7 +75,8 @@ public partial class ProjectileNodeV2 : Area2D
         BodyEntered += OnBodyEntered;
         AreaEntered += OnAreaEntered;
 
-        GD.Print($"Projectile spawned with color: {elementColor}, speed: {Speed}, accel: {Acceleration}");
+        string piercingInfo = Piercing ? $", piercing (max {MaxPierceHits} hits)" : "";
+        GD.Print($"Projectile spawned with color: {elementColor}, speed: {Speed}, accel: {Acceleration}{piercingInfo}");
     }
 
     /// <summary>
@@ -128,9 +137,6 @@ public partial class ProjectileNodeV2 : Area2D
     /// </summary>
     private void OnBodyEntered(Node2D body)
     {
-        if (hasHit)
-            return;
-
         // Check if it's an enemy or wall
         if (body.IsInGroup("enemies"))
         {
@@ -138,7 +144,7 @@ public partial class ProjectileNodeV2 : Area2D
         }
         else if (body is StaticBody2D)
         {
-            // Hit a wall, just destroy
+            // Hit a wall - always destroy (piercing doesn't work on walls)
             QueueFree();
         }
     }
@@ -148,9 +154,6 @@ public partial class ProjectileNodeV2 : Area2D
     /// </summary>
     private void OnAreaEntered(Area2D area)
     {
-        if (hasHit)
-            return;
-
         // Check if it's an enemy
         if (area.IsInGroup("enemies"))
         {
@@ -163,11 +166,16 @@ public partial class ProjectileNodeV2 : Area2D
     /// </summary>
     private void OnCollision(Node2D target)
     {
-        if (hasHit)
-            return;
+        // Check if we already hit this enemy (for piercing)
+        ulong targetId = target.GetInstanceId();
+        if (hitEnemies.Contains(targetId))
+        {
+            return; // Already hit this enemy, skip
+        }
 
-        hasHit = true;
-        GD.Print($"Projectile hit: {target.Name}");
+        // Mark enemy as hit
+        hitEnemies.Add(targetId);
+        GD.Print($"Projectile hit: {target.Name} (hit #{hitEnemies.Count})");
 
         // Create impact particle burst
         SpawnImpactEffect();
@@ -175,7 +183,7 @@ public partial class ProjectileNodeV2 : Area2D
         // Execute on-hit actions
         if (OnHitActions.Count > 0 && Context != null)
         {
-            var interpreter = new EffectInterpreter(Context.WorldNode);
+            var interpreter = EffectInterpreterPool.Get(Context.WorldNode);
             var hitContext = Context.With(
                 position: GlobalPosition,
                 target: target
@@ -187,7 +195,13 @@ public partial class ProjectileNodeV2 : Area2D
             }
         }
 
-        QueueFree();
+        // Destroy projectile if not piercing, or if max hits reached
+        if (!Piercing || hitEnemies.Count >= MaxPierceHits)
+        {
+            string reason = !Piercing ? "non-piercing" : $"max pierce hits ({MaxPierceHits}) reached";
+            GD.Print($"Projectile destroyed: {reason}");
+            QueueFree();
+        }
     }
 
     /// <summary>

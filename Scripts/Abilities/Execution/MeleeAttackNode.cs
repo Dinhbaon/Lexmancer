@@ -40,9 +40,21 @@ public partial class MeleeAttackNode : Area2D
     private Tween movementTween;
     private float activationDelay = 0f;
     private bool followCaster = false;
+    private bool isDash = false; // Special handling for dash
+    private Vector2 dashStartPos;
+    private Vector2 dashEndPos;
+    private bool isJumpSmash = false;
+    private Node2D jumpShadow;
+    private Vector2 casterOriginalScale = Vector2.One;
+    private Vector2 shadowBaseScale = Vector2.One;
+    private bool jumpSmashVisualsArmed = false;
 
     public override void _Ready()
     {
+        // Set collision layers explicitly (layer 2 = abilities, mask 1 = enemies)
+        CollisionLayer = 2; // Don't collide with other abilities
+        CollisionMask = 1;  // Detect layer 1 (enemies and player are on layer 1)
+
         ResolveCasterNode();
         TryStartMovement();
 
@@ -60,6 +72,15 @@ public partial class MeleeAttackNode : Area2D
 
         // Initially disable collision (during windup)
         Monitoring = false;
+
+        if (isJumpSmash && activationDelay > 0f)
+        {
+            if (slashVisual != null)
+                slashVisual.Visible = false;
+            if (slashParticles != null)
+                slashParticles.Emitting = false;
+            jumpSmashVisualsArmed = true;
+        }
 
         // Connect signals
         BodyEntered += OnBodyEntered;
@@ -107,32 +128,45 @@ public partial class MeleeAttackNode : Area2D
     {
         var collision = new CollisionShape2D();
 
-        switch (Shape.ToLower())
+        // Special handling for dash: create line hitbox from start to end
+        if (isDash)
         {
-            case "arc":
-                // Use a circle segment (approximate with polygon)
-                collision.Shape = CreateArcShape();
-                break;
+            float distance = dashStartPos.DistanceTo(dashEndPos);
+            var dashShape = new RectangleShape2D();
+            dashShape.Size = new Vector2(distance, Width * 64f);
+            collision.Shape = dashShape;
+            // Position at midpoint of the line
+            collision.Position = new Vector2(distance / 2, 0);
+        }
+        else
+        {
+            switch (Shape.ToLower())
+            {
+                case "arc":
+                    // Use a circle segment (approximate with polygon)
+                    collision.Shape = CreateArcShape();
+                    break;
 
-            case "circle":
-                // Full circle around player
-                var circleShape = new CircleShape2D();
-                circleShape.Radius = Range * 64f;
-                collision.Shape = circleShape;
-                break;
+                case "circle":
+                    // Full circle around player
+                    var circleShape = new CircleShape2D();
+                    circleShape.Radius = Range * 64f;
+                    collision.Shape = circleShape;
+                    break;
 
-            case "rectangle":
-                // Thrust/stab forward
-                var rectShape = new RectangleShape2D();
-                rectShape.Size = new Vector2(Range * 64f, Width * 64f);
-                collision.Shape = rectShape;
-                collision.Position = new Vector2(Range * 64f / 2, 0); // Offset to extend forward
-                break;
+                case "rectangle":
+                    // Thrust/stab forward
+                    var rectShape = new RectangleShape2D();
+                    rectShape.Size = new Vector2(Range * 64f, Width * 64f);
+                    collision.Shape = rectShape;
+                    collision.Position = new Vector2(Range * 64f / 2, 0); // Offset to extend forward
+                    break;
 
-            default:
-                GD.PrintErr($"Unknown melee shape: {Shape}, defaulting to arc");
-                collision.Shape = CreateArcShape();
-                break;
+                default:
+                    GD.PrintErr($"Unknown melee shape: {Shape}, defaulting to arc");
+                    collision.Shape = CreateArcShape();
+                    break;
+            }
         }
 
         // Don't rotate the collision shape itself - we'll rotate the entire Area2D
@@ -184,6 +218,20 @@ public partial class MeleeAttackNode : Area2D
     /// </summary>
     private Vector2[] GenerateVisualPolygon()
     {
+        // Special handling for dash: create line visual
+        if (isDash)
+        {
+            float distance = dashStartPos.DistanceTo(dashEndPos);
+            float width = Width * 64f;
+            return new Vector2[]
+            {
+                new Vector2(0, -width/2),
+                new Vector2(distance, -width/2),
+                new Vector2(distance, width/2),
+                new Vector2(0, width/2)
+            };
+        }
+
         switch (Shape.ToLower())
         {
             case "arc":
@@ -292,9 +340,19 @@ public partial class MeleeAttackNode : Area2D
     {
         timeAlive += (float)delta;
 
+        // Dash stays at start position (trail), others follow caster
         if (followCaster && casterNode != null)
         {
             GlobalPosition = casterNode.GlobalPosition;
+        }
+        else if (isDash && timeAlive == (float)delta) // First frame only
+        {
+            GlobalPosition = dashStartPos;
+        }
+
+        if (isJumpSmash && jumpShadow != null && casterNode != null)
+        {
+            jumpShadow.GlobalPosition = casterNode.GlobalPosition;
         }
 
         // Enable collision after windup
@@ -303,6 +361,18 @@ public partial class MeleeAttackNode : Area2D
             isActive = true;
             Monitoring = true;
             GD.Print("Melee attack active!");
+
+            if (jumpSmashVisualsArmed)
+            {
+                if (slashVisual != null)
+                    slashVisual.Visible = true;
+                if (slashParticles != null)
+                {
+                    slashParticles.Restart();
+                    slashParticles.Emitting = true;
+                }
+                jumpSmashVisualsArmed = false;
+            }
         }
 
         // Destroy after active time expires
@@ -321,6 +391,11 @@ public partial class MeleeAttackNode : Area2D
         {
             slashVisual.Scale = Vector2.One;
         }
+    }
+
+    public override void _ExitTree()
+    {
+        CleanupJumpSmashVisuals();
     }
 
     private void ResolveCasterNode()
@@ -356,21 +431,35 @@ public partial class MeleeAttackNode : Area2D
         switch (movement)
         {
             case "dash":
+                // Dash: invulnerable during movement, line trail hitbox (doesn't follow)
+                isDash = true;
+                followCaster = false;
+                activationDelay = 0f;
+                break;
             case "lunge":
+                // Lunge: leap to location, attack on landing
+                followCaster = true;
+                activationDelay = MoveDuration;
+                break;
             case "jump_smash":
+                // Jump smash: leap to location, attack on landing (usually AOE)
+                followCaster = true;
+                activationDelay = MoveDuration;
+                isJumpSmash = true;
                 break;
             case "backstep":
                 moveDir = -moveDir;
+                followCaster = true;
+                activationDelay = 0f;
                 break;
             case "blink":
             case "teleport_strike":
+                followCaster = true;
+                activationDelay = 0f;
                 break;
             default:
                 return;
         }
-
-        activationDelay = movement == "jump_smash" ? MoveDuration : 0f;
-        followCaster = true;
 
         var target = casterNode.GlobalPosition + moveDir * MoveDistance * 64f;
         if (movement == "teleport_strike")
@@ -391,6 +480,18 @@ public partial class MeleeAttackNode : Area2D
             target = casterNode.GlobalPosition + moveDir * travel;
         }
 
+        // Store dash positions for line hitbox
+        if (isDash)
+        {
+            dashStartPos = casterNode.GlobalPosition;
+            dashEndPos = target;
+            // Make player invulnerable during dash
+            SetInvulnerable(casterNode, true);
+            // Schedule removal of invulnerability after dash completes
+            var timer = GetTree().CreateTimer(MoveDuration);
+            timer.Timeout += () => SetInvulnerable(casterNode, false);
+        }
+
         if (movement == "blink" || movement == "teleport_strike")
         {
             casterNode.GlobalPosition = target;
@@ -402,6 +503,12 @@ public partial class MeleeAttackNode : Area2D
             movementTween.TweenProperty(casterNode, "global_position", target, MoveDuration)
                 .SetTrans(Tween.TransitionType.Sine)
                 .SetEase(movement == "jump_smash" ? Tween.EaseType.InOut : Tween.EaseType.Out);
+
+            if (isJumpSmash)
+            {
+                SetupJumpSmashVisuals();
+                movementTween.Finished += CleanupJumpSmashVisuals;
+            }
         }
     }
 
@@ -461,7 +568,7 @@ public partial class MeleeAttackNode : Area2D
         // Execute on-hit actions
         if (OnHitActions.Count > 0 && Context != null)
         {
-            var interpreter = new EffectInterpreter(Context.WorldNode);
+            var interpreter = EffectInterpreterPool.Get(Context.WorldNode);
             var hitContext = Context.With(
                 position: GlobalPosition,
                 target: target
@@ -506,5 +613,99 @@ public partial class MeleeAttackNode : Area2D
             };
             Context.WorldNode.AddChild(timer);
         }
+    }
+
+    /// <summary>
+    /// Set invulnerability flag on a node (used for dash)
+    /// </summary>
+    private void SetInvulnerable(Node node, bool invulnerable)
+    {
+        if (node == null)
+            return;
+
+        if (invulnerable)
+        {
+            node.SetMeta("invulnerable", true);
+            GD.Print($"{node.Name} is now invulnerable (dash)");
+        }
+        else
+        {
+            node.RemoveMeta("invulnerable");
+            GD.Print($"{node.Name} is no longer invulnerable");
+        }
+    }
+
+    private void SetupJumpSmashVisuals()
+    {
+        if (casterNode == null)
+            return;
+
+        casterOriginalScale = casterNode.Scale;
+
+        if (Context?.WorldNode != null)
+        {
+            jumpShadow = CreateJumpShadow(casterNode.GlobalPosition);
+            Context.WorldNode.AddChild(jumpShadow);
+            shadowBaseScale = jumpShadow.Scale;
+        }
+
+        float upTime = Mathf.Max(0.05f, MoveDuration * 0.4f);
+        float downTime = Mathf.Max(0.05f, MoveDuration - upTime);
+
+        var scaleTween = CreateTween();
+        scaleTween.TweenProperty(casterNode, "scale", casterOriginalScale * 1.15f, upTime)
+            .SetTrans(Tween.TransitionType.Sine)
+            .SetEase(Tween.EaseType.Out);
+        scaleTween.TweenProperty(casterNode, "scale", casterOriginalScale, downTime)
+            .SetTrans(Tween.TransitionType.Sine)
+            .SetEase(Tween.EaseType.In);
+
+        if (jumpShadow != null)
+        {
+            var shadowTween = CreateTween();
+            shadowTween.TweenProperty(jumpShadow, "scale", shadowBaseScale * 0.7f, upTime)
+                .SetTrans(Tween.TransitionType.Sine)
+                .SetEase(Tween.EaseType.Out);
+            shadowTween.TweenProperty(jumpShadow, "scale", shadowBaseScale, downTime)
+                .SetTrans(Tween.TransitionType.Sine)
+                .SetEase(Tween.EaseType.In);
+        }
+    }
+
+    private void CleanupJumpSmashVisuals()
+    {
+        if (casterNode != null)
+            casterNode.Scale = casterOriginalScale;
+
+        if (jumpShadow != null && IsInstanceValid(jumpShadow))
+        {
+            jumpShadow.QueueFree();
+            jumpShadow = null;
+        }
+    }
+
+    private static Node2D CreateJumpShadow(Vector2 position)
+    {
+        var shadowRoot = new Node2D();
+        shadowRoot.GlobalPosition = position;
+        shadowRoot.ZIndex = -10;
+
+        var shadow = new Polygon2D();
+        shadow.Color = new Color(0f, 0f, 0f, 0.35f);
+        shadow.Polygon = CreateCirclePolygon(18f, 20);
+        shadowRoot.AddChild(shadow);
+
+        return shadowRoot;
+    }
+
+    private static Vector2[] CreateCirclePolygon(float radius, int points)
+    {
+        var poly = new Vector2[points];
+        for (int i = 0; i < points; i++)
+        {
+            float angle = i * Mathf.Tau / points;
+            poly[i] = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
+        }
+        return poly;
     }
 }

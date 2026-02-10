@@ -2,12 +2,16 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Lexmancer.Core;
 
 namespace Lexmancer.Elements;
 
 /// <summary>
 /// Player's consumable element inventory
 /// Elements are consumed when combined (not when cast)
+///
+/// Migration note: This class now emits EventBus signals in addition to C# events
+/// for backward compatibility. New code should listen to EventBus instead.
 /// </summary>
 public class PlayerElementInventory
 {
@@ -16,9 +20,17 @@ public class PlayerElementInventory
 
 	public const int MaxEquippedSlots = 3;
 
+	// Legacy C# events - kept for backward compatibility during migration
+	[Obsolete("Use EventBus.ElementAdded instead")]
 	public event Action<int, int> OnElementAdded;
+
+	[Obsolete("Use EventBus.ElementConsumed instead")]
 	public event Action<int, int> OnElementConsumed;
+
+	[Obsolete("Use EventBus.ElementsCombined instead")]
 	public event Action<int> OnElementCombined;
+
+	[Obsolete("Use EventBus.HotbarEquipmentChanged instead")]
 	public event Action OnEquipmentChanged; // Fired when equipped elements change
 
 	/// <summary>
@@ -40,10 +52,12 @@ public class PlayerElementInventory
 		if (isNew && equippedElements.Count < MaxEquippedSlots)
 		{
 			equippedElements.Add(elementId);
-			OnEquipmentChanged?.Invoke();
+			OnEquipmentChanged?.Invoke(); // Legacy
+			EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarEquipmentChanged, equippedElements.Count - 1, elementId);
 		}
 
-		OnElementAdded?.Invoke(elementId, count);
+		OnElementAdded?.Invoke(elementId, count); // Legacy
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.ElementAdded, elementId, count);
 		GD.Print($"Added {count}x element ID {elementId} (now have {quantities[elementId]})");
 	}
 
@@ -75,12 +89,15 @@ public class PlayerElementInventory
 			// Auto-unequip if removed from inventory
 			if (equippedElements.Contains(elementId))
 			{
+				int slotIndex = equippedElements.IndexOf(elementId);
 				equippedElements.Remove(elementId);
-				OnEquipmentChanged?.Invoke();
+				OnEquipmentChanged?.Invoke(); // Legacy
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarEquipmentChanged, slotIndex, -1);
 			}
 		}
 
-		OnElementConsumed?.Invoke(elementId, count);
+		OnElementConsumed?.Invoke(elementId, count); // Legacy
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.ElementConsumed, elementId, count);
 		GD.Print($"Consumed {count}x element ID {elementId}");
 		return true;
 	}
@@ -132,7 +149,8 @@ public class PlayerElementInventory
 		// Add result to inventory
 		AddElement(resultElement.Id, 1);
 
-		OnElementCombined?.Invoke(resultElement.Id);
+		OnElementCombined?.Invoke(resultElement.Id); // Legacy
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.ElementsCombined, element1Id, element2Id, resultElement.Id);
 		GD.Print($"Combined element {element1Id} + {element2Id} = {resultElement.Name}!");
 
 		return resultElement;
@@ -181,7 +199,8 @@ public class PlayerElementInventory
 		}
 
 		equippedElements.Add(elementId);
-		OnEquipmentChanged?.Invoke();
+		OnEquipmentChanged?.Invoke(); // Legacy
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarEquipmentChanged, equippedElements.Count - 1, elementId);
 		GD.Print($"Equipped element {elementId}");
 		return true;
 	}
@@ -197,8 +216,10 @@ public class PlayerElementInventory
 		if (!equippedElements.Contains(elementId))
 			return false;
 
+		int slotIndex = equippedElements.IndexOf(elementId);
 		equippedElements.Remove(elementId);
-		OnEquipmentChanged?.Invoke();
+		OnEquipmentChanged?.Invoke(); // Legacy
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.HotbarEquipmentChanged, slotIndex, -1);
 		GD.Print($"Unequipped element {elementId}");
 		return true;
 	}

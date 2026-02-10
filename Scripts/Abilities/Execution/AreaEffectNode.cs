@@ -2,6 +2,8 @@ using Godot;
 using System.Collections.Generic;
 using Lexmancer.Abilities.V2;
 using Lexmancer.Abilities.Visuals;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.Execution;
 
@@ -168,7 +170,7 @@ public partial class AreaEffectNode : Node2D
                 {
                     if (includeDamage && LingeringDamage > 0)
                     {
-                        Combat.DamageSystem.ApplyDamage(enemy, LingeringDamage);
+                        ServiceLocator.Instance.Combat.ApplyDamage(enemy, LingeringDamage);
                     }
 
                     if (OnHitActions.Count > 0 && Context != null)
@@ -201,7 +203,7 @@ public partial class AreaEffectNode : Node2D
         // Execute on-expire actions
         if (OnExpireActions.Count > 0 && Context != null)
         {
-            var interpreter = new EffectInterpreter(Context.WorldNode);
+            var interpreter = EffectInterpreterPool.Get(Context.WorldNode);
 
             foreach (var action in OnExpireActions)
             {

@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using Lexmancer.Core;
+using Lexmancer.Services;
 
 public partial class PlayerController : Node, IMoveable
 {
@@ -73,7 +74,7 @@ public partial class PlayerController : Node, IMoveable
         }
 
         // Let StatusEffectManager handle all movement-based status effects
-        var statusManager = Lexmancer.Abilities.Execution.StatusEffectManager.Instance;
+        var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
         if (statusManager != null)
         {
             statusManager.ApplyMovementEffects(this, inputDirection);

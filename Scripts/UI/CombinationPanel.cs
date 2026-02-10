@@ -3,6 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Lexmancer.Elements;
+using Lexmancer.Abilities.LLM;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.UI;
 
@@ -45,7 +48,9 @@ public partial class CombinationPanel : Control
 	private Button clearDatabaseButton;
 
 	private bool isOpen = false;
-	private bool useLLM = true; // Toggle for LLM generation
+	private bool useLLM = true; // Toggle for LLM generation (synced with ConfigService)
+	private bool isLLMStatusSubscribed = false;
+	private LLMService llmService;
 
 	public override void _Ready()
 	{
@@ -77,22 +82,33 @@ public partial class CombinationPanel : Control
 			inventory.OnEquipmentChanged += () => { if (isOpen) RefreshInventoryList(); };
 		}
 
-		// Initialize LLM generator
-		try
+
+		// Reuse shared LLM service provided by Main
+		llmService = GetTree().Root.GetNodeOrNull<LLMService>("/root/Main/LLMService");
+		if (llmService != null)
 		{
-			llmGenerator = new LLMElementGenerator(
-				playerId: "player_001",
-				useLLM: true,
-				llmBaseUrl: "http://localhost:11434",
-				llmModel: "qwen2.5:7b"
-			);
-			GD.Print("LLM Generator initialized successfully");
+			if (llmService.ElementGenerator != null)
+			{
+				HookLLMService(llmService);
+			}
+			else
+			{
+				SubscribeToLLMStatus();
+			}
 		}
-		catch (Exception ex)
+		else
 		{
-			GD.PrintErr($"Failed to initialize LLM Generator: {ex.Message}");
-			useLLM = false;
+			GD.PrintErr("LLMService not found; UI generation unavailable");
 		}
+	}
+
+	public override void _ExitTree()
+	{
+		if (isLLMStatusSubscribed && EventBus.Instance != null)
+		{
+			EventBus.Instance.LLMServiceStatusChanged -= OnLLMServiceStatusChanged;
+		}
+		base._ExitTree();
 	}
 
 	public override void _Input(InputEvent @event)
@@ -190,10 +206,10 @@ public partial class CombinationPanel : Control
 		combineTab.AddChild(topHBox);
 
 		useLLMCheckbox = new CheckBox();
-		useLLMCheckbox.Text = "Use LLM Generation";
+		useLLMCheckbox.Text = "LLM Generation (Always On)";
 		useLLMCheckbox.ButtonPressed = true;
+		useLLMCheckbox.Disabled = true;
 		useLLMCheckbox.AddThemeColorOverride("font_color", Colors.White);
-		useLLMCheckbox.Toggled += (bool enabled) => { useLLM = enabled; };
 		topHBox.AddChild(useLLMCheckbox);
 
 		// Element selection row
@@ -332,6 +348,51 @@ public partial class CombinationPanel : Control
 		outputMargin.AddChild(llmOutputLabel);
 	}
 
+	private void SubscribeToLLMStatus()
+	{
+		if (isLLMStatusSubscribed || EventBus.Instance == null)
+		{
+			return;
+		}
+
+		EventBus.Instance.LLMServiceStatusChanged += OnLLMServiceStatusChanged;
+		isLLMStatusSubscribed = true;
+	}
+
+	private void OnLLMServiceStatusChanged(bool isReady, string statusMessage)
+	{
+		if (!isReady)
+		{
+			return;
+		}
+
+		CallDeferred(nameof(TryHookLLMService));
+	}
+
+	private void TryHookLLMService()
+	{
+		var service = GetTree().Root.GetNodeOrNull<LLMService>("/root/Main/LLMService");
+		if (service != null && service.ElementGenerator != null)
+		{
+			HookLLMService(service);
+		}
+	}
+
+	private void HookLLMService(LLMService llmService)
+	{
+		llmGenerator = llmService.ElementGenerator;
+		useLLM = true;
+		ServiceLocator.Instance.Config.SetUseLLM(true);
+		useLLMCheckbox.ButtonPressed = true;
+		llmGenerator?.SetUseLLM(true);
+		if (isLLMStatusSubscribed && EventBus.Instance != null)
+		{
+			EventBus.Instance.LLMServiceStatusChanged -= OnLLMServiceStatusChanged;
+			isLLMStatusSubscribed = false;
+		}
+		GD.Print("LLM Generator hooked to shared service");
+	}
+
 	private void CreateInventoryTab()
 	{
 		var inventoryTab = new VBoxContainer();
@@ -380,8 +441,7 @@ public partial class CombinationPanel : Control
 		foreach (var (elementId, count) in elements)
 		{
 			// Get element data
-			Element element = ElementRegistry.GetElement(elementId)
-				;
+			Element element = ServiceLocator.Instance.Elements.GetElement(elementId);
 
 			// Add to first list
 			var button1 = CreateElementButton(elementId, element, count, 1);
@@ -426,7 +486,7 @@ public partial class CombinationPanel : Control
 	private HBoxContainer CreateInventoryElementRow(int elementId, int count)
 	{
 		// Get element data
-		Element element = ElementRegistry.GetElement(elementId);
+		Element element = ServiceLocator.Instance.Elements.GetElement(elementId);
 
 		var row = new HBoxContainer();
 		row.AddThemeConstantOverride("separation", 10);
@@ -439,7 +499,7 @@ public partial class CombinationPanel : Control
 
 		// Element name and count
 		var nameLabel = new Label();
-		nameLabel.Text = $"{element?.Name ?? $"Element {elementId}"} x{count}";
+		nameLabel.Text = $"{element?.Name ?? "Unknown Element"} x{count}";
 		nameLabel.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 		nameLabel.VerticalAlignment = VerticalAlignment.Center;
 		nameLabel.AddThemeColorOverride("font_color", Colors.White);
@@ -513,7 +573,7 @@ public partial class CombinationPanel : Control
 	private Button CreateElementButton(int elementId, Element element, int count, int listNumber)
 	{
 		var button = new Button();
-		button.Text = $"{element?.Name ?? $"Element {elementId}"} x{count}";
+		button.Text = $"{element?.Name ?? "Unknown Element"} x{count}";
 		button.CustomMinimumSize = new Vector2(0, 30);
 		button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
 
@@ -547,11 +607,9 @@ public partial class CombinationPanel : Control
 		// Update result label to show combination preview
 		if (selectedElement1 > 0 && selectedElement2 > 0)
 		{
-			// Get element data for display (check registry first for combined elements)
-			Element elem1 = ElementRegistry.GetElement(selectedElement1)
-				;
-			Element elem2 = ElementRegistry.GetElement(selectedElement2)
-				;
+			// Get element data for display (check service first for combined elements)
+			Element elem1 = ServiceLocator.Instance.Elements.GetElement(selectedElement1);
+			Element elem2 = ServiceLocator.Instance.Elements.GetElement(selectedElement2);
 
 			// Check if this combination has been seen before
 			Element cachedCombination = llmGenerator?.GetCachedCombination(selectedElement1, selectedElement2);
@@ -564,7 +622,7 @@ public partial class CombinationPanel : Control
 
 				cachedElementLabel.Text = $"✨ {cachedCombination.Name}\n{cachedCombination.Description}";
 
-				resultLabel.Text = $"{elem1?.Name ?? selectedElement1.ToString()} + {elem2?.Name ?? selectedElement2.ToString()}";
+				resultLabel.Text = $"{elem1?.Name ?? "Unknown Element"} + {elem2?.Name ?? "Unknown Element"}";
 				resultLabel.AddThemeColorOverride("font_color", Colors.Cyan);
 			}
 			else
@@ -573,7 +631,7 @@ public partial class CombinationPanel : Control
 				cachedCombinationContainer.Visible = false;
 				combineButton.Visible = true;
 
-				resultLabel.Text = $"{elem1?.Name ?? selectedElement1.ToString()} + {elem2?.Name ?? selectedElement2.ToString()} = ???";
+				resultLabel.Text = $"{elem1?.Name ?? "Unknown Element"} + {elem2?.Name ?? "Unknown Element"} = ???";
 				resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
 			}
 		}
@@ -653,33 +711,36 @@ public partial class CombinationPanel : Control
 		{
 			Element newElement = null;
 
-			// Use LLM to generate the element (name + ability)
-			if (useLLM && llmGenerator != null)
+			if (llmGenerator == null)
 			{
-				llmOutputLabel.Text = forceNew
-					? "🔮 Generating NEW element variation..."
-					: "🔮 Asking LLM to create new element...";
-				newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: true);
-			}
-			else
-			{
-				resultLabel.Text = "LLM is disabled - cannot generate dynamic elements!";
-				resultLabel.AddThemeColorOverride("font_color", Colors.Red);
-				llmOutputLabel.Text = "Enable LLM to combine elements.";
-				llmOutputLabel.AddThemeColorOverride("font_color", Colors.Red);
+				resultLabel.Text = "LLM is initializing... please wait.";
+				resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+				llmOutputLabel.Text = "Model is loading. Try again in a moment.";
+				llmOutputLabel.AddThemeColorOverride("font_color", Colors.Yellow);
 				return;
 			}
+
+			// Force LLM on before generation
+			useLLM = true;
+			ServiceLocator.Instance.Config.SetUseLLM(true);
+			llmGenerator.SetUseLLM(true);
+
+			// Use LLM to generate the element (name + ability)
+			llmOutputLabel.Text = forceNew
+				? "🔮 Generating NEW element variation..."
+				: "🔮 Asking LLM to create new element...";
+			newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: true);
 
 			if (newElement != null)
 			{
 				var elapsed = (DateTime.Now - startTime).TotalSeconds;
 
 				// Ensure element is cached and has an ID before adding to inventory
-				if (newElement.Id <= 0)
-				{
-					ElementRegistry.CacheElement(newElement);
-					GD.Print($"Cached new element: {newElement.Name}");
-				}
+					if (newElement.Id <= 0)
+					{
+						ServiceLocator.Instance.Elements.CacheElement(newElement);
+						GD.Print($"Cached new element: {newElement.Name}");
+					}
 
 				// Use the inventory's combine method
 				var result = inventory.CombineElements(selectedElement1, selectedElement2, newElement);
@@ -857,27 +918,27 @@ public partial class CombinationPanel : Control
 			};
 
 			// Add to inventory
-			if (inventory != null)
-			{
-				// Cache element in database (this assigns the ID)
-				int elementId = ElementRegistry.CacheElement(newElement);
+				if (inventory != null)
+				{
+					// Cache element in database (this assigns the ID)
+					int elementId = ServiceLocator.Instance.Elements.CacheElement(newElement);
 
-				// Add to player inventory
-				inventory.AddElement(elementId, 1);
+					// Add to player inventory
+					inventory.AddElement(elementId, 1);
 
-				GD.Print($"Cached test element: {newElement.Name} (ID: {elementId})");
+					GD.Print($"Cached test element: {newElement.Name} (ID: {elementId})");
 
-				testResultLabel.Text = $"✅ Created element: {newElement.Name}\nAdded to inventory!";
-				testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+					testResultLabel.Text = $"✅ Created element: {newElement.Name}\nAdded to inventory!";
+					testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
-				// Refresh all lists
-				RefreshAll();
-			}
-			else
-			{
-				testResultLabel.Text = "Inventory not initialized!";
-				testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
-			}
+					// Refresh all lists
+					RefreshAll();
+				}
+				else
+				{
+					testResultLabel.Text = "Inventory not initialized!";
+					testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				}
 		}
 		catch (Exception ex)
 		{
@@ -889,26 +950,39 @@ public partial class CombinationPanel : Control
 
 	private void OnClearDatabasePressed()
 	{
-		try
-		{
-			// Clear element registry cache
-			ElementRegistry.ClearAllCache();
+			try
+			{
+				// Clear element registry cache
+				ServiceLocator.Instance.Elements.ClearAllCache();
 
-			testResultLabel.Text = "✅ Database cleared successfully!";
-			testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+				// Re-seed base elements after clearing DB
+				ElementDefinitions.InitializeBaseElements();
 
-			GD.Print("SQLite database cleared");
-		}
-		catch (Exception ex)
-		{
-			testResultLabel.Text = $"❌ Error clearing database:\n{ex.Message}";
-			testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
-			GD.PrintErr($"Database clear error: {ex}");
-		}
+				// Reset inventory to match new base elements
+				if (inventory != null)
+				{
+					inventory.Clear();
+					var baseElements = ServiceLocator.Instance.Elements.GetElementsByTier(1);
+					foreach (var element in baseElements)
+					{
+						inventory.AddElement(element.Id, 2);
+					}
+				}
+
+				RefreshAll();
+
+				testResultLabel.Text = "✅ Database cleared successfully!";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
+
+				GD.Print("SQLite database cleared");
+			}
+			catch (Exception ex)
+			{
+				testResultLabel.Text = $"❌ Error clearing database:\n{ex.Message}";
+				testResultLabel.AddThemeColorOverride("font_color", Colors.Red);
+				GD.PrintErr($"Database clear error: {ex}");
+			}
 	}
 
-	public override void _ExitTree()
-	{
-		// Nothing to clean up
-	}
+	
 }

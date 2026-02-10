@@ -6,12 +6,14 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Lexmancer.Core;
+using Lexmancer.Services;
 using OllamaSharp;
 using OllamaSharp.Models;
 using Lexmancer.Abilities.V2;
 using Lexmancer.Abilities.LLM;
 using Lexmancer.Elements;
-using Lexmancer.Config;
+using System.Threading;
 
 /// <summary>
 /// V2 LLM Client with creative prompting for effect scripts.
@@ -22,34 +24,21 @@ public class LLMClientV2
     private readonly OllamaApiClient ollama;
     private readonly string baseUrl;
     private readonly string model;
-    private readonly bool _useDirect;
 
     public LLMClientV2(string baseUrl = "http://localhost:11434", string model = "qwen2.5:7b")
     {
         this.baseUrl = baseUrl;
         this.model = model;
 
-        // Check if LLamaSharp direct inference is available
-        _useDirect = GameConfig.UseLLamaSharpDirect && ModelManager.Instance?.IsLoaded == true;
-
-        if (_useDirect)
+        // HTTP client is always prepared; selection happens per-call
+        var httpClient = new System.Net.Http.HttpClient
         {
-            GD.Print("LLMClientV2 initialized with LLamaSharp direct inference");
-        }
-        else
-        {
-            // Fall back to OllamaSharp HTTP client
-            var httpClient = new System.Net.Http.HttpClient
-            {
-                Timeout = System.Threading.Timeout.InfiniteTimeSpan,
-                BaseAddress = new Uri(baseUrl)
-            };
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+            BaseAddress = new Uri(baseUrl)
+        };
 
-            this.ollama = new OllamaApiClient(httpClient);
-            this.ollama.SelectedModel = model;
-
-            GD.Print("LLMClientV2 initialized with OllamaSharp HTTP fallback");
-        }
+        this.ollama = new OllamaApiClient(httpClient);
+        this.ollama.SelectedModel = model;
     }
 
     /// <summary>
@@ -66,15 +55,14 @@ public class LLMClientV2
         {
             var prompt = BuildElementCreationPrompt(element1Name, element2Name, element1Description, element2Description);
 
-            if (_useDirect)
+            if (CanUseDirect())
             {
                 GD.Print($"Generating element via LLamaSharp: {element1Name} + {element2Name}");
-                // Grammar is always enforced - guarantees valid JSON structure and enum values
-                jsonResponse = await ModelManager.Instance.InferAsync(prompt);
+                jsonResponse = await ModelManager.Instance.InferAsync(prompt, CancellationToken.None);
             }
             else
             {
-                GD.Print($"Sending element creation request to LLM: {element1Name} + {element2Name}");
+                GD.Print($"Sending element creation request to LLM (HTTP fallback): {element1Name} + {element2Name}");
 
                 var request = new GenerateRequest
                 {
@@ -175,38 +163,43 @@ Combining: {element1Info} + {element2Info}
 
 Generate a UNIQUE, CREATIVE element. Think beyond the obvious!
 
-Examples of creative combinations:
-- Fire + Earth: Lava, Magma, Hellstone, Obsidian, Ashrock, Cinders
-- Water + Fire: Steam, Mist, Geysir, Thermal Vent, Scalding Fog
-- Earth + Water: Mud, Clay, Quicksand, Swamp, Silt, Fertile Soil
+Examples: Fire + Earth → Lava/Magma/Obsidian, Water + Fire → Steam/Geysir, Earth + Water → Mud/Quicksand
 
-SUPPORTED ACTIONS (use a variety of these):
-1. ""spawn_melee"" - Melee attack with shaped hitbox ⚔️
-   args: shape (""arc""/""circle""/""rectangle""), range (0.5-3 tiles), arc_angle (30-360, for arc), width (0.2-2 tiles, for rectangle), windup_time (0-0.3), active_time (0.1-0.5),
-         movement (""stationary""/""dash""/""lunge""/""jump_smash""/""backstep""/""blink""/""teleport_strike""), move_distance (0-4 tiles), move_duration (0-0.6s)
-   SHAPES: arc (cone/wedge), circle (360° AOE), rectangle (thrust/stab)
+SUPPORTED ACTIONS:
+1. ""spawn_melee"" - Melee attack with shaped hitbox
+   args: shape (""arc""/""circle""/""rectangle""), range (0.5-3), arc_angle (30-360, for arc), width (0.2-2, for rectangle), windup_time (0-0.3), active_time (0.1-0.5),
+         movement (""stationary""/""dash""/""lunge""/""jump_smash""/""backstep""/""blink""/""teleport_strike""), move_distance (0-4), move_duration (0-0.6)
+
+   MOVEMENT TYPES:
+   - ""stationary"": No movement, attack at current position
+   - ""dash"": Invulnerable dash forward, leaves slash trail that damages enemies along path (best for aggressive gap-closing)
+   - ""lunge"": Leap to location, attack on landing (gap closer + strike)
+   - ""jump_smash"": Leap to location, attack on landing (typically with circle/AOE for ground slam effect)
+   - ""backstep"": Move backward while attacking (defensive retreat)
+   - ""blink"": Instant teleport to location
+   - ""teleport_strike"": Teleport to nearest enemy
 
 2. ""spawn_projectile"" - Shoot projectile(s)
-   args: count (1-5), speed (200-800), pattern (""single""/""spread""/""spiral""), acceleration (-500 to 500, optional)
+   args: count (1-5), speed (200-800), pattern (""single""/""spread""/""spiral""/""circle""), acceleration (-500 to 500, optional), piercing (true/false), max_pierce_hits (1-10)
 
 3. ""spawn_area"" - Create area effect
-   args: radius (50-300), duration (1-10), lingering_damage (0-20), growth_time (0-3, optional)
+   args: radius (50-300), duration (1-10), lingering_damage (0-20), growth_time (0-3, optional), damage (optional)
 
 4. ""spawn_beam"" - Fire a beam
    args: length (200-800), width (10-50), duration (0.5-3), travel_time (0-2, optional)
 
-5. ""damage"" - Deal damage
-   args: amount (1-100), element (""fire""/""water""/""earth""/""lightning""/""poison""/""wind""/""shadow""/""light"")
+5. ""damage"" - Deal damage (ONLY in on_hit/on_expire)
+   args: amount (1-100), element (""fire""/""water""/""earth""/""lightning""/""poison""/""wind""/""shadow""/""light""/""neutral""), area_radius (optional)
 
-6. ""heal"" - Restore health
+6. ""heal"" - Restore health (ONLY in on_hit/on_expire)
    args: amount (10-50)
 
-7. ""apply_status"" - Apply status effect
-   args: status (""burning""/""frozen""/""poisoned""/""shocked""/""slowed""/""stunned""/""weakened""/""feared""), duration (1-10), stacks (true/false, optional)
-   StatusEffectType ids: burning, frozen, poisoned, shocked, slowed, stunned, weakened, feared
+7. ""apply_status"" - Apply status effect (ONLY in on_hit/on_expire)
+   args: status (""burning""/""frozen""/""poisoned""/""shocked""/""slowed""/""stunned""/""weakened""/""feared""), duration (1-10), stacks (true/false)
 
-8. ""knockback"" - Push target
-   args: force (100-500), direction (""away""/""towards"")
+8. ""knockback"" - Push target (ONLY in on_hit/on_expire)
+   args: force (100-500), direction (""away""/""towards""/""towards_center"")
+   NOTE: ""towards_center"" only for area effects
 
 9. ""chain_to_nearby"" - Chain to other enemies
    args: max_chains (2-5), range (100-300)
@@ -214,165 +207,75 @@ SUPPORTED ACTIONS (use a variety of these):
 10. ""repeat"" - Repeat an action multiple times
    args: count (2-5), interval (0.5-2)
 
-CRITICAL RULES - ABILITIES MUST BE INTERESTING:
-⚠️  NEVER create abilities that ONLY do damage without any additional effects
-⚠️  EVERY ability MUST include AT LEAST ONE of these interesting mechanics:
-    - Status effects (burning, frozen, poisoned, shocked, slowed, stunned, weakened, feared)
-    - Area effects (spawn_area with lingering_damage)
-    - Multiple projectiles (count > 1 or pattern spread/spiral)
-    - Melee attacks (spawn_melee with different shapes: arc, circle, rectangle)
-    - Chaining (chain_to_nearby)
-    - Knockback
-    - Healing
-    - Repeated casts (repeat)
-    - Beams
-    - Combination of multiple mechanics
+CRITICAL RULES:
+⚠️  NEVER create abilities that ONLY do damage
+⚠️  EVERY ability MUST include interesting mechanics: status effects, area damage, multiple projectiles, piercing, melee shapes, chaining, knockback, healing, repeat, beams
 
-✅ GOOD EXAMPLES (use variety of attack types):
-- Arc melee slash + knockback + damage (90° cone in front)
-- Circle melee slam + stunned status (360° AOE around player)
-- Rectangle melee stab + poisoned status (thrust forward)
-- Wide arc melee sweep + damage + status (160° cleave)
-- Projectile + burning status
-- Area with lingering damage + slowed status
-- Multiple projectiles in spread pattern
-- Beam + knockback + frozen status
-- Projectile that chains to nearby enemies
-- Repeated projectile waves
+✅ GOOD: Arc/circle/rectangle melee + status, Projectiles + chains/status, Areas + lingering damage, Beams + knockback
+❌ BAD: Single projectile with only damage, Beam with only damage
 
-ATTACK TYPE VARIETY: Try to mix up attack types! Don't always default to projectiles.
-- Use melee (arc/circle/rectangle) for close-range, physical-themed elements
-- Use projectiles for ranged, magical-themed elements
-- Use areas for persistent, zone-control elements
-- Use beams for focused, piercing elements
+ATTACK TYPE VARIETY: Mix it up!
+- Melee (arc/circle/rectangle) for close-range, physical elements
+- Projectiles for ranged, magical elements
+- Areas for zone control
+- Beams for piercing attacks
 
-❌ BAD EXAMPLES (boring, damage only - DO NOT GENERATE):
-- Single projectile that only deals damage
-- Beam that only deals damage
-- Area that only deals instant damage without lingering effects
+STRUCTURE:
+1. TOP-LEVEL: spawn_projectile, spawn_area, spawn_beam, spawn_melee, chain_to_nearby, repeat
+2. NESTED in on_hit/on_expire: damage, apply_status, heal, knockback
 
-CRITICAL STRUCTURE RULES:
-1. TOP-LEVEL actions (in ""script"" array): ONLY spawn_projectile, spawn_area, spawn_beam, spawn_melee, chain_to_nearby, or repeat
-2. ALL spawn_* actions MUST have ""on_hit"" array with actions inside (damage, apply_status, heal, knockback)
-3. NEVER put damage/apply_status/heal/knockback at top level - they go INSIDE on_hit arrays
-4. Effects array must have at least 1 effect with a non-empty script array
+DESCRIPTION RULES:
+Generate actions FIRST, then write ability ""description"" to match what you created.
+- spawn_melee → mention melee/strike/slash/cleave
+- spawn_projectile count=1 → ""fire a projectile""
+- spawn_projectile count>1 → mention count/""multiple""
+- spawn_area → mention zone/area/pool
+- movement=teleport_strike → mention dash/teleport
+- on_hit apply_status → mention the status effect
 
-CONCRETE EXAMPLES - Study these and output the same structure:
+EXAMPLES:
 
-EXAMPLE 1 - Melee (Fire + Shadow):
+Melee (Fire + Shadow):
 {{
   ""name"": ""Shadowflame Reaper"",
   ""description"": ""A dark flame scythe that cleaves through enemies in a wide arc."",
   ""color"": ""#8B0000"",
   ""ability"": {{
-    ""description"": ""Swing a scythe of dark flames in a 160° arc"",
     ""primitives"": [""fire"", ""shadow""],
-    ""effects"": [
-      {{
-        ""script"": [
-          {{
-            ""action"": ""spawn_melee"",
-            ""args"": {{""shape"": ""arc"", ""range"": 2.5, ""arc_angle"": 160, ""movement"": ""teleport_strike"", ""move_distance"": 2.5, ""move_duration"": 0.08}},
-            ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 35, ""element"": ""fire""}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 5}}}}
-            ]
-          }}
-        ]
-      }}
-    ],
-    ""cooldown"": 2.0
+    ""effects"": [{{""script"": [{{
+      ""action"": ""spawn_melee"",
+      ""args"": {{""shape"": ""arc"", ""range"": 2.5, ""arc_angle"": 160, ""movement"": ""teleport_strike"", ""move_distance"": 2.5, ""move_duration"": 0.08}},
+      ""on_hit"": [
+        {{""action"": ""damage"", ""args"": {{""amount"": 35, ""element"": ""fire""}}}},
+        {{""action"": ""apply_status"", ""args"": {{""status"": ""burning"", ""duration"": 5}}}}
+      ]}}]}}],
+    ""cooldown"": 2.0,
+    ""description"": ""Teleport and cleave in a 160° arc, burning enemies""
   }}
 }}
 
-EXAMPLE 2 - Projectiles (Water + Lightning):
+Projectiles (Water + Lightning):
 {{
   ""name"": ""Stormwave"",
   ""description"": ""Electrified water bolts that spread and chain to enemies."",
   ""color"": ""#1E90FF"",
   ""ability"": {{
-    ""description"": ""Fire 3 electrified bolts that shock and chain"",
     ""primitives"": [""water"", ""lightning""],
-    ""effects"": [
-      {{
-        ""script"": [
-          {{
-            ""action"": ""spawn_projectile"",
-            ""args"": {{""count"": 3, ""speed"": 600, ""pattern"": ""spread""}},
-            ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 20}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 4}}}},
-              {{
-                ""action"": ""chain_to_nearby"",
-                ""args"": {{""max_chains"": 3, ""range"": 200}},
-                ""on_hit"": [{{""action"": ""damage"", ""args"": {{""amount"": 15}}}}]
-              }}
-            ]
-          }}
-        ]
-      }}
-    ],
-    ""cooldown"": 1.5
+    ""effects"": [{{""script"": [{{
+      ""action"": ""spawn_projectile"",
+      ""args"": {{""count"": 3, ""speed"": 600, ""pattern"": ""spread""}},
+      ""on_hit"": [
+        {{""action"": ""damage"", ""args"": {{""amount"": 20}}}},
+        {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 4}}}},
+        {{""action"": ""chain_to_nearby"", ""args"": {{""max_chains"": 3, ""range"": 200}}, ""on_hit"": [{{""action"": ""damage"", ""args"": {{""amount"": 15}}}}]}}
+      ]}}]}}],
+    ""cooldown"": 1.5,
+    ""description"": ""Fire 3 electrified bolts in a spread that shock and chain to nearby enemies""
   }}
 }}
 
-EXAMPLE 3 - Area (Earth + Poison):
-{{
-  ""name"": ""Toxic Swamp"",
-  ""description"": ""A growing pool of poisonous mud that slows enemies."",
-  ""color"": ""#556B2F"",
-  ""ability"": {{
-    ""description"": ""Create a toxic swamp that grows and poisons"",
-    ""primitives"": [""earth"", ""poison""],
-    ""effects"": [
-      {{
-        ""script"": [
-          {{
-            ""action"": ""spawn_area"",
-            ""args"": {{""radius"": 150, ""duration"": 6, ""lingering_damage"": 8, ""growth_time"": 1.5}},
-            ""on_hit"": [
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""poisoned"", ""duration"": 6}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""slowed"", ""duration"": 4}}}}
-            ]
-          }}
-        ]
-      }}
-    ],
-    ""cooldown"": 2.5
-  }}
-}}
-
-EXAMPLE 4 - Beam (Light + Lightning):
-{{
-  ""name"": ""Divine Lance"",
-  ""description"": ""A piercing beam of holy lightning that travels slowly and pushes enemies back."",
-  ""color"": ""#FFD700"",
-  ""ability"": {{
-    ""description"": ""Fire a piercing beam of light that deals damage, shocks, and knocks back"",
-    ""primitives"": [""light"", ""lightning""],
-    ""effects"": [
-      {{
-        ""script"": [
-          {{
-            ""action"": ""spawn_beam"",
-            ""args"": {{""length"": 600, ""width"": 30, ""duration"": 1.5, ""travel_time"": 0.8}},
-            ""on_hit"": [
-              {{""action"": ""damage"", ""args"": {{""amount"": 28, ""element"": ""lightning""}}}},
-              {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 3}}}},
-              {{""action"": ""knockback"", ""args"": {{""force"": 400, ""direction"": ""away""}}}}
-            ]
-          }}
-        ]
-      }}
-    ],
-    ""cooldown"": 2.0
-  }}
-}}
-
-NOW CREATE YOUR ELEMENT using primitives [""{element1.ToLower()}"", ""{element2.ToLower()}""]:
-
-REMEMBER: Make it INTERESTING! Include status effects, area damage, chains, knockback, beams, or other mechanics!
-Be CREATIVE with the element name and make sure the ability matches the element's theme!";
+NOW CREATE YOUR ELEMENT using primitives [""{element1.ToLower()}"", ""{element2.ToLower()}""].
+Make it INTERESTING with status effects, area damage, chains, knockback, or other mechanics!";
     }
 
     private static string SanitizeJsonResponse(string jsonResponse)
@@ -566,6 +469,11 @@ Be CREATIVE with the element name and make sure the ability matches the element'
 
         repaired = sb.ToString();
         return repaired != trimmed;
+    }
+
+    private static bool CanUseDirect()
+    {
+        return ServiceLocator.Instance.Config.UseLLamaSharpDirect && ModelManager.Instance?.IsLoaded == true;
     }
 
     private AbilityV2 CreateFallbackAbilityForElement(string elementName)

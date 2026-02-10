@@ -1,8 +1,10 @@
 using Godot;
 using System;
 using System.Text.RegularExpressions;
-using Lexmancer.Combat;
 using Lexmancer.Abilities.Execution;
+using Lexmancer.Combat;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.V2;
 
@@ -98,7 +100,7 @@ public static class ConditionEvaluator
 
 		string status = match.Groups[1].Value;
 
-		var statusManager = StatusEffectManager.Instance;
+		var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
 		if (statusManager == null)
 			return false;
 
@@ -122,7 +124,7 @@ public static class ConditionEvaluator
 		string op = match.Groups[2].Value;
 		int threshold = int.Parse(match.Groups[3].Value);
 
-		var statusManager = StatusEffectManager.Instance;
+		var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
 		if (statusManager == null)
 			return false;
 

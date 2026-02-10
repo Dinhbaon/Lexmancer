@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text.Json;
 using Lexmancer.Abilities.Execution;
 using Lexmancer.Abilities.Visuals;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.V2;
 
@@ -17,6 +19,7 @@ public class EffectInterpreter
     private readonly Node worldNode;
     private int nestingDepth = 0;
     private const int MaxNestingDepth = 5;
+    private ConfigService Config => ServiceLocator.Instance.Config;
 
     public EffectInterpreter(Node worldNode)
     {
@@ -52,6 +55,18 @@ public class EffectInterpreter
 
     private void ExecuteAction(EffectAction action, EffectContext context)
     {
+        if (action.Action?.ToLower() == "spawn_area"
+            && context.Variables.TryGetValue("jump_smash_delay_pending", out var pendingObj)
+            && pendingObj is bool pending
+            && pending
+            && TryGetContextFloat(context, "jump_smash_delay_seconds", out float delaySeconds)
+            && delaySeconds > 0f)
+        {
+            ScheduleDelayedAction(action, context, delaySeconds, spawnAtCaster: true);
+            context.Variables["jump_smash_delay_pending"] = false;
+            return;
+        }
+
         switch (action.Action.ToLower())
         {
             case "spawn_projectile":
@@ -130,13 +145,16 @@ public class EffectInterpreter
         string pattern = GetArg(args, "pattern", "single");
         float speed = GetArg(args, "speed", 400f);
         float acceleration = GetArg(args, "acceleration", 0f);
+        bool piercing = GetArg(args, "piercing", false);
+        int maxPierceHits = GetArg(args, "max_pierce_hits", 3);
 
-        GD.Print($"   Args: count={count}, pattern={pattern}, speed={speed}, accel={acceleration}");
+        GD.Print($"   Args: count={count}, pattern={pattern}, speed={speed}, accel={acceleration}, piercing={piercing}");
 
         // Clamp values
         count = Math.Clamp(count, 1, 5);
         speed = Math.Clamp(speed, 50f, 1200f);
         acceleration = Math.Clamp(acceleration, -500f, 500f);
+        maxPierceHits = Math.Clamp(maxPierceHits, 1, 10);
 
         GD.Print($"   OnHit actions: {onHit?.Count ?? 0}");
 
@@ -151,6 +169,8 @@ public class EffectInterpreter
             projectile.Direction = direction;
             projectile.Speed = speed;
             projectile.Acceleration = acceleration;
+            projectile.Piercing = piercing;
+            projectile.MaxPierceHits = maxPierceHits;
             projectile.OnHitActions = onHit;
             projectile.Context = ctx;
 
@@ -160,7 +180,8 @@ public class EffectInterpreter
             GD.Print($"   ✓ Added projectile to worldNode ({worldNode.Name})");
 
             string accelInfo = acceleration != 0 ? $" (accel: {acceleration})" : "";
-            GD.Print($"✓ Spawned projectile #{i+1}/{count} at speed {speed}{accelInfo}");
+            string pierceInfo = piercing ? $", piercing (max {maxPierceHits})" : "";
+            GD.Print($"✓ Spawned projectile #{i+1}/{count} at speed {speed}{accelInfo}{pierceInfo}");
         }
     }
 
@@ -171,6 +192,7 @@ public class EffectInterpreter
         int tickDamage = GetArg(args, "lingering_damage", 0);
         int damage = GetArg(args, "damage", 0);
         float growthTime = GetArg(args, "growth_time", 0f);
+        bool spawnAtCaster = GetArg(args, "spawn_at_caster", false);
 
         // Clamp values
         radius = Math.Clamp(radius, 50f, 300f);
@@ -178,9 +200,22 @@ public class EffectInterpreter
         tickDamage = Math.Clamp(tickDamage, 0, 20);
         growthTime = Math.Clamp(growthTime, 0f, 3f);
 
+        Vector2 spawnPosition = ctx.Position;
+        if (spawnAtCaster)
+        {
+            if (ctx.Caster is Node2D caster2D)
+            {
+                spawnPosition = caster2D.GlobalPosition;
+            }
+            else if (ctx.Caster is IMoveable moveable)
+            {
+                spawnPosition = moveable.GetBody().GlobalPosition;
+            }
+        }
+
         // Create area effect node
         var areaNode = new Abilities.Execution.AreaEffectNode();
-        areaNode.GlobalPosition = ctx.Position;
+        areaNode.GlobalPosition = spawnPosition;
         areaNode.Radius = radius;
         areaNode.Duration = duration;
         areaNode.LingeringDamage = tickDamage;
@@ -194,10 +229,10 @@ public class EffectInterpreter
         // If immediate damage specified, apply it now (only if instant, not growing)
         if (damage > 0 && growthTime <= 0)
         {
-            var nearbyEnemies = FindNearbyEnemies(ctx.Position, radius, 20);
+            var nearbyEnemies = FindNearbyEnemies(spawnPosition, radius, 20);
             foreach (var enemy in nearbyEnemies)
             {
-                Combat.DamageSystem.ApplyDamage(enemy, damage);
+                ServiceLocator.Instance.Combat.ApplyDamage(enemy, damage);
             }
         }
 
@@ -258,6 +293,12 @@ public class EffectInterpreter
         moveDistance = Math.Clamp(moveDistance, 0f, 4f);
         moveDuration = Math.Clamp(moveDuration, 0f, 0.6f);
 
+        if (movement == "jump_smash" && moveDuration > 0f)
+        {
+            ctx.Variables["jump_smash_delay_pending"] = true;
+            ctx.Variables["jump_smash_delay_seconds"] = moveDuration;
+        }
+
         // Create melee attack node
         var melee = new Execution.MeleeAttackNode();
         melee.GlobalPosition = ctx.Position;
@@ -303,7 +344,7 @@ public class EffectInterpreter
                     damage = Math.Clamp(damage, 1f, 100f);
                     GD.Print($"[DEBUG] Clamped damage: {damage}");
 
-                    Combat.DamageSystem.ApplyDamage(enemy, damage, element, ctx.Caster);
+                    ServiceLocator.Instance.Combat.ApplyDamage(enemy, damage, element, ctx.Caster);
                 }
 
                 GD.Print($"Applied AOE damage to {nearbyEnemies.Count} enemies in radius {radius}");
@@ -318,15 +359,21 @@ public class EffectInterpreter
         float finalDamage = EvaluateDamageFormula(args, ctx);
         string damageElement = GetArg(args, "element", "neutral");
 
-        GD.Print($"[DEBUG] Raw damage from formula: {finalDamage}");
-        GD.Print($"[DEBUG] Args contents: {System.Text.Json.JsonSerializer.Serialize(args)}");
+        if (Config.VerboseLogging)
+        {
+            GD.Print($"[DEBUG] Raw damage from formula: {finalDamage}");
+            GD.Print($"[DEBUG] Args contents: {System.Text.Json.JsonSerializer.Serialize(args)}");
+        }
 
         // Clamp damage
         finalDamage = Math.Clamp(finalDamage, 1f, 100f);
-        GD.Print($"[DEBUG] Final clamped damage: {finalDamage}");
+        if (Config.VerboseLogging)
+        {
+            GD.Print($"[DEBUG] Final clamped damage: {finalDamage}");
+        }
 
         // Apply damage to target
-        Combat.DamageSystem.ApplyDamage(ctx.Target, finalDamage, damageElement, ctx.Caster);
+        ServiceLocator.Instance.Combat.ApplyDamage(ctx.Target, finalDamage, damageElement, ctx.Caster);
     }
 
     private void ApplyStatus(Dictionary<string, object> args, EffectContext ctx)
@@ -352,7 +399,7 @@ public class EffectInterpreter
         }
 
         // Get or create StatusEffectManager instance
-        var statusManager = Execution.StatusEffectManager.Instance;
+        var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
         if (statusManager == null)
         {
             // Create StatusEffectManager if it doesn't exist
@@ -433,15 +480,24 @@ public class EffectInterpreter
             _ => Vector2.Zero
         };
 
-        // Apply physics impulse
-        if (ctx.Target is CharacterBody2D body)
+        // Apply sustained knockback via StatusEffectManager
+        var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
+        if (statusManager != null)
         {
-            body.Velocity = knockbackDir * force;
-            GD.Print($"Applied knockback: force={force}, direction={direction} to {ctx.Target.Name}");
+            statusManager.ApplyKnockback(ctx.Target, knockbackDir, force, duration: 0.3f);
         }
         else
         {
-            GD.PrintErr($"Target {ctx.Target.Name} is not a CharacterBody2D, cannot apply knockback");
+            // Fallback to instant velocity if StatusEffectManager not available
+            if (ctx.Target is CharacterBody2D body)
+            {
+                body.Velocity = knockbackDir * force;
+                GD.Print($"Applied knockback (instant): force={force}, direction={direction} to {ctx.Target.Name}");
+            }
+            else
+            {
+                GD.PrintErr($"Target {ctx.Target.Name} is not a CharacterBody2D, cannot apply knockback");
+            }
         }
     }
 
@@ -466,7 +522,7 @@ public class EffectInterpreter
         }
 
         // Apply healing
-        Combat.DamageSystem.ApplyHealing(healTarget, amount);
+        ServiceLocator.Instance.Combat.ApplyHealing(healTarget, amount);
     }
 
     private void RepeatAction(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> actions)
@@ -494,6 +550,68 @@ public class EffectInterpreter
     }
 
     // ==================== HELPER METHODS ====================
+    private void ScheduleDelayedAction(EffectAction action, EffectContext ctx, float delaySeconds, bool spawnAtCaster)
+    {
+        var executor = worldNode.GetNodeOrNull<Execution.DelayedActionExecutor>("DelayedActionExecutor");
+        if (executor == null)
+        {
+            executor = new Execution.DelayedActionExecutor();
+            executor.Name = "DelayedActionExecutor";
+            worldNode.AddChild(executor);
+            GD.Print("Created DelayedActionExecutor");
+        }
+
+        var delayedAction = new EffectAction
+        {
+            Action = action.Action,
+            Args = new Dictionary<string, object>(action.Args ?? new Dictionary<string, object>()),
+            OnHit = action.OnHit,
+            OnExpire = action.OnExpire,
+            Condition = action.Condition
+        };
+
+        if (spawnAtCaster)
+            delayedAction.Args["spawn_at_caster"] = true;
+
+        executor.ScheduleActions(new List<EffectAction> { delayedAction }, ctx, 1, delaySeconds);
+        GD.Print($"Scheduled delayed action '{action.Action}' after {delaySeconds:0.##}s");
+    }
+
+    private bool TryGetContextFloat(EffectContext ctx, string key, out float value)
+    {
+        value = 0f;
+        if (ctx?.Variables == null || !ctx.Variables.TryGetValue(key, out var raw))
+            return false;
+
+        try
+        {
+            switch (raw)
+            {
+                case float f:
+                    value = f;
+                    return true;
+                case double d:
+                    value = (float)d;
+                    return true;
+                case int i:
+                    value = i;
+                    return true;
+                case long l:
+                    value = l;
+                    return true;
+                case string s when float.TryParse(s, out var parsed):
+                    value = parsed;
+                    return true;
+                default:
+                    value = Convert.ToSingle(raw);
+                    return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static bool IsHealAllowed(Node caster, Node target)
     {
@@ -532,7 +650,10 @@ public class EffectInterpreter
 
         // Otherwise use amount
         float amount = GetArg(args, "amount", 20f);
-        GD.Print($"[DEBUG] GetArg returned damage amount: {amount}");
+        if (Config.VerboseLogging)
+        {
+            GD.Print($"[DEBUG] GetArg returned damage amount: {amount}");
+        }
         return amount;
     }
 
@@ -579,6 +700,10 @@ public class EffectInterpreter
             catch (Exception ex)
             {
                 GD.PrintErr($"[GetArg] Failed to convert '{key}' value '{value}' (type: {value?.GetType().Name}) to {typeof(T).Name}: {ex.Message}");
+                if (Config.VerboseLogging)
+                {
+                    GD.PrintErr($"[GetArg] Failed to convert '{key}' value '{value}' (type: {value?.GetType().Name}) to {typeof(T).Name}: {ex.Message}");
+                }
                 return defaultValue;
             }
         }

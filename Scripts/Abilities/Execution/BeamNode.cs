@@ -219,12 +219,12 @@ public partial class BeamNode : Node2D
 			position: enemy is Node2D enemy2D ? enemy2D.GlobalPosition : Context.Position
 		);
 
-		// Execute OnHit actions
-		var interpreter = new EffectInterpreter(GetTree().Root);
-		foreach (var action in OnHitActions)
-		{
-			interpreter.Execute(action, hitContext);
-		}
+        // Execute OnHit actions
+        var interpreter = EffectInterpreterPool.Get(Context.WorldNode ?? GetTree().Root);
+        foreach (var action in OnHitActions)
+        {
+            interpreter.Execute(action, hitContext);
+        }
 
 		GD.Print($"Beam hit enemy: {enemy.Name}");
 	}

@@ -3,7 +3,8 @@ using System;
 using System.Collections.Generic;
 using Lexmancer.Elements;
 using Lexmancer.Combat;
-using Lexmancer.UI;
+using Lexmancer.Core;
+using Lexmancer.Services;
 
 public partial class GameManager : Node
 {
@@ -25,7 +26,7 @@ public partial class GameManager : Node
 		Inventory = new PlayerElementInventory();
 
 		// Get all tier 1 (base) elements and add them to inventory
-		var baseElements = ElementRegistry.GetElementsByTier(1);
+		var baseElements = ServiceLocator.Instance.Elements.GetElementsByTier(1);
 		foreach (var element in baseElements)
 		{
 			Inventory.AddElement(element.Id, 2);
@@ -34,10 +35,43 @@ public partial class GameManager : Node
 		GD.Print("Starting inventory:");
 		Inventory.PrintInventory();
 
+		// Subscribe to EventBus events
+		SubscribeToEvents();
+
 		// Wait for player to be set
 		CallDeferred(nameof(InitializePlayerHealth));
 
 		State = GameState.Playing;
+	}
+
+	public override void _ExitTree()
+	{
+		// Unsubscribe from events to prevent memory leaks
+		UnsubscribeFromEvents();
+		base._ExitTree();
+	}
+
+	private void SubscribeToEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.EnemyDied += OnEnemyDied;
+			EventBus.Instance.EnemySpawned += OnEnemySpawned;
+			GD.Print("GameManager subscribed to EventBus");
+		}
+		else
+		{
+			GD.PrintErr("EventBus not available! Make sure it's configured as autoload.");
+		}
+	}
+
+	private void UnsubscribeFromEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.EnemyDied -= OnEnemyDied;
+			EventBus.Instance.EnemySpawned -= OnEnemySpawned;
+		}
 	}
 
 	private void InitializePlayerHealth()
@@ -55,14 +89,24 @@ public partial class GameManager : Node
 			}
 
 			PlayerHealth.OnDeath += OnPlayerDeath;
-			PlayerHealth.OnDamaged += (amount) => GD.Print($"Player took {amount} damage!");
+			PlayerHealth.OnDamaged += (amount) =>
+			{
+				GD.Print($"Player took {amount} damage!");
+				// Emit event for UI to listen to
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.PlayerDamaged, amount, "physical");
+				EventBus.Instance?.EmitSignal(EventBus.SignalName.PlayerHealthChanged, PlayerHealth.Current, PlayerHealth.Max);
+			};
 
 			// Add player to group
 			Player.AddToGroup("player");
+
+			// Emit initial health state
+			EventBus.Instance?.EmitSignal(EventBus.SignalName.PlayerHealthChanged, PlayerHealth.Current, PlayerHealth.Max);
 		}
 	}
 
-	public void OnEnemyDied(Node enemy)
+	// EventBus callback - note signature matches the delegate
+	private void OnEnemyDied(Node enemy, Vector2 position)
 	{
 		enemiesAlive--;
 		GD.Print($"Enemy died. Remaining: {enemiesAlive}/{totalEnemiesInWave}");
@@ -76,7 +120,8 @@ public partial class GameManager : Node
 		}
 	}
 
-	public void OnEnemySpawned()
+	// EventBus callback
+	private void OnEnemySpawned(Node enemy)
 	{
 		enemiesAlive++;
 		totalEnemiesInWave++;
@@ -89,7 +134,17 @@ public partial class GameManager : Node
 
 		State = GameState.Defeat;
 		GD.Print("=== PLAYER DIED ===");
-		ShowGameOverScreen("DEFEAT");
+
+		// Emit event instead of directly calling UI
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.PlayerDied);
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GameStateChanged, "defeat");
+
+		// Pause the game
+		GetTree().Paused = true;
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GamePaused);
+
+		// Request game over screen via event
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.ShowGameOverScreen, "DEFEAT", false);
 	}
 
 	private void OnAllEnemiesDead()
@@ -99,31 +154,29 @@ public partial class GameManager : Node
 
 		State = GameState.Victory;
 		GD.Print("=== VICTORY ===");
-		ShowGameOverScreen("VICTORY!");
-	}
 
-	private void ShowGameOverScreen(string message)
-	{
+		// Emit event instead of directly calling UI
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.AllEnemiesDefeated);
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GameStateChanged, "victory");
+
 		// Pause the game
 		GetTree().Paused = true;
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GamePaused);
 
-		// Show game over UI (note: it's inside the UILayer)
-		var gameOverScreen = GetNodeOrNull<GameOverScreen>("/root/Main/UILayer/GameOverScreen");
-		if (gameOverScreen != null)
-		{
-			gameOverScreen.ShowScreen(message, State == GameState.Victory);
-		}
-		else
-		{
-			GD.PrintErr("GameOverScreen not found! Restarting in 3 seconds...");
-			GetTree().CreateTimer(3.0).Timeout += RestartGame;
-		}
+		// Request game over screen via event
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.ShowGameOverScreen, "VICTORY!", true);
 	}
 
 	public void RestartGame()
 	{
 		GD.Print("Restarting game...");
+
+		// Emit event
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GameRestarting);
+
 		GetTree().Paused = false;
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GameUnpaused);
+
 		GetTree().ReloadCurrentScene();
 	}
 }

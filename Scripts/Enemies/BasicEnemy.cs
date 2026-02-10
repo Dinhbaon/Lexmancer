@@ -3,6 +3,7 @@ using System;
 using Lexmancer.Combat;
 using Lexmancer.UI;
 using Lexmancer.Core;
+using Lexmancer.Services;
 
 namespace Lexmancer.Enemies;
 
@@ -65,7 +66,7 @@ public partial class BasicEnemy : CharacterBody2D, IMoveable
 			var direction = (player.GlobalPosition - GlobalPosition).Normalized();
 
 			// Let StatusEffectManager handle all movement-based status effects
-			var statusManager = Abilities.Execution.StatusEffectManager.Instance;
+			var statusManager = ServiceLocator.Instance.Combat.StatusEffects;
 			if (statusManager != null)
 			{
 				statusManager.ApplyMovementEffects(this, direction);
@@ -93,7 +94,7 @@ public partial class BasicEnemy : CharacterBody2D, IMoveable
 			if (damageTimer <= 0)
 			{
 				// Deal contact damage to player
-				DamageSystem.ApplyDamage(player, ContactDamage, "physical", this);
+				ServiceLocator.Instance.Combat.ApplyDamage(player, ContactDamage, "physical", this);
 				damageTimer = DamageInterval;
 			}
 		}
@@ -143,8 +144,9 @@ public partial class BasicEnemy : CharacterBody2D, IMoveable
 		// TODO: Drop element pickup
 		// TODO: Play death animation/effect
 
-		// Emit signal for game manager
-		GetTree().Root.GetNode<Node>("Main")?.GetNode<GameManager>("GameManager")?.OnEnemyDied(this);
+		// Emit death event via EventBus (decoupled from GameManager)
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.EnemyDied, this, GlobalPosition);
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.EntityDied, this, GlobalPosition);
 
 		QueueFree();
 	}
