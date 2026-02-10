@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using Lexmancer.Core;
 
 namespace Lexmancer.UI;
 
@@ -27,6 +28,42 @@ public partial class GameOverScreen : Control
 		ProcessMode = ProcessModeEnum.Always;
 
 		CreateUI();
+
+		// Subscribe to EventBus
+		SubscribeToEvents();
+	}
+
+	public override void _ExitTree()
+	{
+		UnsubscribeFromEvents();
+		base._ExitTree();
+	}
+
+	private void SubscribeToEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ShowGameOverScreen += OnShowGameOverScreen;
+			GD.Print("GameOverScreen subscribed to EventBus");
+		}
+		else
+		{
+			GD.PrintErr("EventBus not available in GameOverScreen!");
+		}
+	}
+
+	private void UnsubscribeFromEvents()
+	{
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ShowGameOverScreen -= OnShowGameOverScreen;
+		}
+	}
+
+	// EventBus callback
+	private void OnShowGameOverScreen(string message, bool isVictory)
+	{
+		ShowScreen(message, isVictory);
 	}
 
 	private void CreateUI()
@@ -102,7 +139,12 @@ public partial class GameOverScreen : Control
 
 	private void OnRestartPressed()
 	{
-		var gameManager = GetNode<GameManager>("/root/Main/GameManager");
-		gameManager?.RestartGame();
+		// Emit restart event instead of calling GameManager directly
+		EventBus.Instance?.EmitSignal(EventBus.SignalName.GameRestarting);
+
+		// For now, still reload the scene directly
+		// TODO: Let GameManager handle this via event listener
+		GetTree().Paused = false;
+		GetTree().ReloadCurrentScene();
 	}
 }
