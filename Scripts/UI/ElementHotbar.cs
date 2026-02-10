@@ -247,8 +247,8 @@ public partial class ElementHotbar : Control
 		// Get direction from player position to mouse position
 		Vector2 playerPos = player is Node2D p ? p.GlobalPosition : Vector2.Zero;
 
-		// Use Godot's built-in method to get world mouse position
-		Vector2 mousePos = GetGlobalMousePosition();
+		// Use world-space mouse position when possible (ElementHotbar is a Control)
+		Vector2 mousePos = player is Node2D p2 ? p2.GetGlobalMousePosition() : GetGlobalMousePosition();
 
 		Vector2 direction = (mousePos - playerPos).Normalized();
 

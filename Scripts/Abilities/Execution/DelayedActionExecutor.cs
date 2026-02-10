@@ -2,6 +2,7 @@ using Godot;
 using System;
 using System.Collections.Generic;
 using Lexmancer.Abilities.V2;
+using Lexmancer.Core;
 
 namespace Lexmancer.Abilities.Execution;
 
@@ -88,12 +89,44 @@ public partial class DelayedActionExecutor : Node
 		// Get world node (root of scene tree)
 		var worldNode = GetTree().Root;
 
+		var refreshedContext = RefreshContextForScheduledActions(context);
+
 		// Create interpreter and execute all actions
 		var interpreter = new EffectInterpreter(worldNode);
 		foreach (var action in actions)
 		{
-			interpreter.Execute(action, context);
+			interpreter.Execute(action, refreshedContext);
 		}
+	}
+
+	private static EffectContext RefreshContextForScheduledActions(EffectContext context)
+	{
+		if (context?.Caster == null)
+			return context;
+
+		Vector2? position = null;
+		Vector2? direction = null;
+		if (context.Caster is Node2D caster2D)
+		{
+			position = caster2D.GlobalPosition;
+			var toMouse = caster2D.GetGlobalMousePosition() - caster2D.GlobalPosition;
+			if (toMouse.Length() > 0.1f)
+				direction = toMouse.Normalized();
+		}
+		else if (context.Caster is IMoveable moveable)
+		{
+			position = moveable.GetBody().GlobalPosition;
+		}
+
+		if (position.HasValue || direction.HasValue)
+		{
+			return context.With(
+				position: position ?? context.Position,
+				direction: direction ?? context.Direction
+			);
+		}
+
+		return context;
 	}
 
 	/// <summary>

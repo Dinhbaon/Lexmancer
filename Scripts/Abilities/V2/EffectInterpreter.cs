@@ -535,6 +535,18 @@ public class EffectInterpreter
 
         GD.Print($"Repeat action {count} times with {interval}s interval");
 
+        if (actions == null || actions.Count == 0)
+            return;
+
+        // Execute once immediately, then schedule remaining repeats
+        foreach (var action in actions)
+        {
+            Execute(action, ctx);
+        }
+
+        if (count <= 1)
+            return;
+
         // Get or create DelayedActionExecutor
         var executor = worldNode.GetNodeOrNull<Execution.DelayedActionExecutor>("DelayedActionExecutor");
         if (executor == null)
@@ -545,8 +557,8 @@ public class EffectInterpreter
             GD.Print("Created DelayedActionExecutor");
         }
 
-        // Schedule actions for delayed execution
-        executor.ScheduleActions(actions, ctx, count, interval);
+        // Schedule remaining actions for delayed execution
+        executor.ScheduleActions(actions, ctx, count - 1, interval);
     }
 
     // ==================== HELPER METHODS ====================

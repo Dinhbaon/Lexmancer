@@ -48,6 +48,10 @@ public partial class MeleeAttackNode : Area2D
     private Vector2 casterOriginalScale = Vector2.One;
     private Vector2 shadowBaseScale = Vector2.One;
     private bool jumpSmashVisualsArmed = false;
+    private bool jumpSmashCollisionMuted = false;
+    private uint casterOriginalCollisionMask = 0;
+    private const uint FallbackEnemyCollisionLayerBit = 1u << 0; // Layer 1
+    private bool casterUntargetableSet = false;
 
     public override void _Ready()
     {
@@ -435,6 +439,7 @@ public partial class MeleeAttackNode : Area2D
                 isDash = true;
                 followCaster = false;
                 activationDelay = 0f;
+                SuppressCasterEnemyCollision(MoveDuration);
                 break;
             case "lunge":
                 // Lunge: leap to location, attack on landing
@@ -446,6 +451,7 @@ public partial class MeleeAttackNode : Area2D
                 followCaster = true;
                 activationDelay = MoveDuration;
                 isJumpSmash = true;
+                SuppressCasterEnemyCollision(MoveDuration);
                 break;
             case "backstep":
                 moveDir = -moveDir;
@@ -682,6 +688,8 @@ public partial class MeleeAttackNode : Area2D
             jumpShadow.QueueFree();
             jumpShadow = null;
         }
+
+        RestoreCasterEnemyCollision();
     }
 
     private static Node2D CreateJumpShadow(Vector2 position)
@@ -707,5 +715,56 @@ public partial class MeleeAttackNode : Area2D
             poly[i] = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
         }
         return poly;
+    }
+
+    private void SuppressCasterEnemyCollision(float duration)
+    {
+        if (duration <= 0f || casterNode is not CollisionObject2D collisionObject)
+            return;
+
+        if (jumpSmashCollisionMuted)
+            return;
+
+        casterOriginalCollisionMask = collisionObject.CollisionMask;
+        uint enemyLayerMask = GetEnemyCollisionLayerMask();
+        collisionObject.CollisionMask = casterOriginalCollisionMask & ~enemyLayerMask;
+        jumpSmashCollisionMuted = true;
+
+        if (casterNode != null && !casterUntargetableSet)
+        {
+            casterNode.SetMeta("untargetable", true);
+            casterUntargetableSet = true;
+        }
+
+        var timer = GetTree().CreateTimer(duration);
+        timer.Timeout += RestoreCasterEnemyCollision;
+    }
+
+    private void RestoreCasterEnemyCollision()
+    {
+        if (!jumpSmashCollisionMuted || casterNode is not CollisionObject2D collisionObject)
+            return;
+
+        collisionObject.CollisionMask = casterOriginalCollisionMask;
+        jumpSmashCollisionMuted = false;
+
+        if (casterUntargetableSet && casterNode != null)
+        {
+            casterNode.RemoveMeta("untargetable");
+            casterUntargetableSet = false;
+        }
+
+    }
+
+    private uint GetEnemyCollisionLayerMask()
+    {
+        uint mask = 0;
+        foreach (Node node in GetTree().GetNodesInGroup("enemies"))
+        {
+            if (node is CollisionObject2D collision)
+                mask |= collision.CollisionLayer;
+        }
+
+        return mask != 0 ? mask : FallbackEnemyCollisionLayerBit;
     }
 }

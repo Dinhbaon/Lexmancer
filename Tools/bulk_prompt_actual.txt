@@ -1,0 +1,208 @@
+═══════════════════════════════════════════════════════════════
+BULK TRAINING DATA GENERATION PROMPT
+Uses the EXACT prompt from LLMClientV2.cs
+═══════════════════════════════════════════════════════════════
+
+Copy the prompt below and replace {ELEMENT1} and {ELEMENT2} with your
+chosen element combination (e.g., "fire" + "water", "earth" + "lightning")
+
+═══════════════════════════════════════════════════════════════
+PROMPT START
+═══════════════════════════════════════════════════════════════
+
+You are a creative game designer creating magical elements.
+
+Combining: {ELEMENT1} + {ELEMENT2}
+
+Generate a UNIQUE, CREATIVE element. Think beyond the obvious!
+
+Examples: Fire + Earth → Lava/Magma/Obsidian, Water + Fire → Steam/Geysir, Earth + Water → Mud/Quicksand
+
+SUPPORTED ACTIONS:
+1. "spawn_melee" - Melee attack with shaped hitbox
+   args: shape ("arc"/"circle"/"rectangle"), range (0.5-3), arc_angle (30-360, for arc), width (0.2-2, for rectangle), windup_time (0-0.3), active_time (0.1-0.5),
+         movement ("stationary"/"dash"/"lunge"/"jump_smash"/"backstep"/"blink"/"teleport_strike"), move_distance (0-4), move_duration (0-0.6)
+
+   MOVEMENT TYPES:
+   - "stationary": No movement, attack at current position
+   - "dash": Invulnerable dash forward, leaves slash trail that damages enemies along path (best for aggressive gap-closing)
+   - "lunge": Leap to location, attack on landing (gap closer + strike)
+   - "jump_smash": Leap to location, attack on landing (typically with circle/AOE for ground slam effect)
+   - "backstep": Move backward while attacking (defensive retreat)
+   - "blink": Instant teleport to location
+   - "teleport_strike": Teleport to nearest enemy
+
+2. "spawn_projectile" - Shoot projectile(s)
+   args: count (1-5), speed (200-800), pattern ("single"/"spread"/"spiral"/"circle"), acceleration (-500 to 500, optional), piercing (true/false), max_pierce_hits (1-10)
+
+3. "spawn_area" - Create area effect
+   args: radius (50-300), duration (1-10), lingering_damage (0-20), growth_time (0-3, optional), damage (optional)
+
+4. "spawn_beam" - Fire a beam
+   args: length (200-800), width (10-50), duration (0.5-3), travel_time (0-2, optional)
+
+5. "damage" - Deal damage (ONLY in on_hit/on_expire)
+   args: amount (1-100), element ("fire"/"water"/"earth"/"lightning"/"poison"/"wind"/"shadow"/"light"/"neutral"), area_radius (optional)
+
+6. "heal" - Restore health (ONLY in on_hit/on_expire)
+   args: amount (10-50)
+
+7. "apply_status" - Apply status effect (ONLY in on_hit/on_expire)
+   args: status ("burning"/"frozen"/"poisoned"/"shocked"/"slowed"/"stunned"/"weakened"/"feared"), duration (1-10), stacks (true/false)
+
+8. "knockback" - Push target (ONLY in on_hit/on_expire)
+   args: force (100-500), direction ("away"/"towards"/"towards_center")
+   NOTE: "towards_center" only for area effects
+
+9. "chain_to_nearby" - Chain to other enemies
+   args: max_chains (2-5), range (100-300)
+
+10. "repeat" - Repeat an action multiple times
+   args: count (2-5), interval (0.5-2)
+
+CONDITIONAL EXECUTION (Optional - use sparingly for interesting synergies):
+Add a "condition" field to any action to execute it conditionally.
+
+Examples:
+- {"action": "damage", "args": {"amount": 40}, "condition": {"if": "target.health < 0.5"}} - Execute damage
+- {"action": "chain_to_nearby", "args": {...}, "condition": {"if": "target.has_status('shocked')"}} - Chain if shocked
+- {"action": "spawn_area", "args": {...}, "condition": {"if": "target.status_stacks('poisoned') >= 3"}} - Trigger at 3+ stacks
+
+Supported conditions:
+- "target.health < 0.5" - Health percentage checks (<, <=, >, >=)
+- "target.has_status('burning')" - Check if target has a status
+- "target.status_stacks('poisoned') >= 3" - Check status stack count
+- "distance < 200" - Distance between caster and target
+
+WHEN TO USE CONDITIONALS:
+✅ Execute mechanics (bonus damage to low HP enemies)
+✅ Status synergies (explode if target has 3+ poison stacks)
+✅ Combo abilities (chain lightning if target is shocked)
+❌ Don't overuse - only 20-30% of abilities should have conditionals
+
+CRITICAL RULES:
+⚠️  NEVER create abilities that ONLY do damage
+⚠️  EVERY ability MUST include interesting mechanics: status effects, area damage, multiple projectiles, piercing, melee shapes, chaining, knockback, healing, repeat, beams
+
+✅ GOOD: Arc/circle/rectangle melee + status, Projectiles + chains/status, Areas + lingering damage, Beams + knockback
+❌ BAD: Single projectile with only damage, Beam with only damage
+
+ATTACK TYPE VARIETY: Mix it up!
+- Melee (arc/circle/rectangle) for close-range, physical elements
+- Projectiles for ranged, magical elements
+- Areas for zone control
+- Beams for piercing attacks
+
+STRUCTURE:
+1. TOP-LEVEL: spawn_projectile, spawn_area, spawn_beam, spawn_melee, chain_to_nearby, repeat
+2. NESTED in on_hit/on_expire: damage, apply_status, heal, knockback
+
+DESCRIPTION RULES:
+Generate actions FIRST, then write ability "description" to match what you created.
+- Mention every action type present (melee/projectile/area/beam).
+- spawn_melee → mention strike/slash/cleave/slam/thrust and the shape (arc/circle/rectangle) when used.
+- movement != "stationary" → mention dash/lunge/blink/teleport/backstep/jump.
+- spawn_projectile count=1 → "fire a projectile" or "shoot a bolt".
+- spawn_projectile count>1 → mention count/"multiple" and the pattern if not "single".
+- projectile piercing=true → mention piercing or "passes through enemies".
+- chain_to_nearby → mention chaining to nearby enemies.
+- repeat → mention repeated casts/waves (count if possible).
+- spawn_area → mention zone/area/pool; if lingering_damage>0 mention lingering damage; if growth_time>0 mention expanding/growing.
+- spawn_beam → mention beam/lance/ray; if travel_time>0 mention it travels forward.
+- on_hit apply_status → mention EACH status effect.
+- on_hit knockback → mention push/pull/knock back.
+- on_hit heal → mention healing.
+- condition → mention the conditional trigger (e.g., "if target is below 50% health", "if target has 3+ poison stacks")
+
+EXAMPLES:
+
+Melee (Fire + Shadow):
+{
+  "name": "Shadowflame Reaper",
+  "description": "A dark flame scythe that cleaves through enemies in a wide arc.",
+  "color": "#8B0000",
+  "ability": {
+    "primitives": ["fire", "shadow"],
+    "effects": [{"script": [{
+      "action": "spawn_melee",
+      "args": {"shape": "arc", "range": 2.5, "arc_angle": 160, "movement": "teleport_strike", "move_distance": 2.5, "move_duration": 0.08},
+      "on_hit": [
+        {"action": "damage", "args": {"amount": 35, "element": "fire"}},
+        {"action": "apply_status", "args": {"status": "burning", "duration": 5}}
+      ]}]}],
+    "cooldown": 2.0,
+    "description": "Teleport and cleave in a 160° arc, burning enemies"
+  }
+}
+
+Projectiles (Water + Lightning):
+{
+  "name": "Stormwave",
+  "description": "Electrified water bolts that spread and chain viciously to shocked enemies.",
+  "color": "#1E90FF",
+  "ability": {
+    "primitives": ["water", "lightning"],
+    "effects": [{"script": [{
+      "action": "spawn_projectile",
+      "args": {"count": 3, "speed": 600, "pattern": "spread"},
+      "on_hit": [
+        {"action": "damage", "args": {"amount": 20}},
+        {"action": "apply_status", "args": {"status": "shocked", "duration": 4}},
+        {"action": "chain_to_nearby", "args": {"max_chains": 3, "range": 200}, "condition": {"if": "target.has_status('shocked')"}, "on_hit": [{"action": "damage", "args": {"amount": 25}}]}
+      ]}]}],
+    "cooldown": 1.5,
+    "description": "Fire 3 electrified bolts in a spread that shock enemies and chain to shocked targets for bonus damage"
+  }
+}
+
+Conditional Execute (Poison + Shadow):
+{
+  "name": "Venom Reaper",
+  "description": "A toxic strike that reaps heavily poisoned enemies.",
+  "color": "#8B008B",
+  "ability": {
+    "primitives": ["poison", "shadow"],
+    "effects": [{"script": [{
+      "action": "spawn_melee",
+      "args": {"shape": "arc", "range": 2.2, "arc_angle": 140},
+      "on_hit": [
+        {"action": "damage", "args": {"amount": 18, "element": "poison"}},
+        {"action": "apply_status", "args": {"status": "poisoned", "duration": 5}},
+        {"action": "damage", "args": {"amount": 45, "element": "shadow"}, "condition": {"if": "target.status_stacks('poisoned') >= 3"}}
+      ]}]}],
+    "cooldown": 2.5,
+    "description": "Slash in an arc applying poison, dealing massive damage if target has 3+ poison stacks"
+  }
+}
+
+NOW CREATE YOUR ELEMENT using primitives ["{element1}", "{element2}"].
+Make it INTERESTING with status effects, area damage, chains, knockback, or other mechanics!
+
+═══════════════════════════════════════════════════════════════
+PROMPT END
+═══════════════════════════════════════════════════════════════
+
+WORKFLOW:
+
+1. Copy the prompt above
+2. Replace {ELEMENT1} and {ELEMENT2} with your chosen combination
+   Example: "fire" + "water", "earth" + "lightning", etc.
+3. Paste into ChatGPT/Claude/Gemini/etc.
+4. Generate one ability
+5. Repeat for all 28 element combinations
+
+ELEMENT COMBINATIONS (8 base elements = 28 pairs):
+- fire + water, fire + earth, fire + lightning, fire + poison, fire + wind, fire + shadow, fire + light
+- water + earth, water + lightning, water + poison, water + wind, water + shadow, water + light
+- earth + lightning, earth + poison, earth + wind, earth + shadow, earth + light
+- lightning + poison, lightning + wind, lightning + shadow, lightning + light
+- poison + wind, poison + shadow, poison + light
+- wind + shadow, wind + light
+- shadow + light
+
+OPTIONAL VARIETY:
+- Use different LLMs for different combinations
+- Generate 2-3 variations per combination and pick the best
+- Include 20-30% of abilities with conditional logic for synergies
+
+Result: High-quality training data with diverse mechanics and conditional logic!

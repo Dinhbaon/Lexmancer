@@ -25,6 +25,7 @@ public partial class ConfigService : Node
 	public int LLMBatchSize { get; private set; } = 1024;
 	public int LLMGpuLayerCount { get; private set; } = 0;
 	public int LLMThreadCount { get; private set; } = 6;
+	public bool GpuAutoDetected { get; private set; } = false;
 	public float LLMTemperature { get; private set; } = 0.7f;
 	public float LLMRepeatPenalty { get; private set; } = 1.15f;
 	public int LLMMaxTokens { get; private set; } = 2400;
@@ -40,7 +41,47 @@ public partial class ConfigService : Node
 	public override void _Ready()
 	{
 		GD.Print("ConfigService initialized with default settings");
+
+		// Auto-detect NVIDIA GPU and optimize settings
+		AutoDetectGpu();
+
 		PrintConfig();
+	}
+
+	// ==================== GPU AUTO-DETECTION ====================
+
+	/// <summary>
+	/// Automatically detect NVIDIA GPU and apply optimal settings.
+	/// Falls back to CPU-only mode if no GPU detected.
+	/// </summary>
+	public void AutoDetectGpu()
+	{
+		GD.Print("=== GPU Auto-Detection ===");
+
+		var gpuInfo = GpuDetector.DetectNvidiaGpu();
+
+		if (gpuInfo != null)
+		{
+			// Apply recommended GPU settings
+			SetLLMGpuLayers(gpuInfo.RecommendedGpuLayers);
+			SetLLMThreads(gpuInfo.RecommendedThreads);
+			GpuAutoDetected = true;
+
+			GD.Print($"✓ GPU acceleration enabled: {gpuInfo.Name}");
+			GD.Print($"  Using {gpuInfo.RecommendedGpuLayers} GPU layers with {gpuInfo.RecommendedThreads} CPU threads");
+		}
+		else
+		{
+			// Fallback to CPU-only mode with optimal thread count
+			SetLLMGpuLayers(0);
+			SetLLMThreads(System.Environment.ProcessorCount - 2); // Leave 2 cores free
+			GpuAutoDetected = false;
+
+			GD.Print("✓ Using CPU-only mode");
+			GD.Print($"  Using {LLMThreadCount} CPU threads");
+		}
+
+		GD.Print("==========================");
 	}
 
 	// ==================== SETTERS (with validation) ====================
@@ -235,7 +276,7 @@ public partial class ConfigService : Node
 				GD.Print($"  Model Path Override: {(string.IsNullOrEmpty(LLMModelPath) ? "(none)" : LLMModelPath)}");
 				GD.Print($"  Context Size: {LLMContextSize}");
 				GD.Print($"  Batch Size: {LLMBatchSize}");
-				GD.Print($"  GPU Layers: {LLMGpuLayerCount}");
+				GD.Print($"  GPU Layers: {LLMGpuLayerCount} {(GpuAutoDetected ? "(auto-detected)" : "(manual/default)")}");
 				GD.Print($"  Threads: {LLMThreadCount}");
 				GD.Print($"  Temperature: {LLMTemperature}");
 				GD.Print($"  Repeat Penalty: {LLMRepeatPenalty}");
@@ -269,6 +310,7 @@ public partial class ConfigService : Node
 			{ "LLMBatchSize", LLMBatchSize },
 			{ "LLMGpuLayerCount", LLMGpuLayerCount },
 			{ "LLMThreadCount", LLMThreadCount },
+			{ "GpuAutoDetected", GpuAutoDetected },
 			{ "LLMTemperature", LLMTemperature },
 			{ "LLMRepeatPenalty", LLMRepeatPenalty },
 			{ "LLMMaxTokens", LLMMaxTokens },

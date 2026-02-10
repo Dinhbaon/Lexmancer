@@ -62,6 +62,9 @@ public partial class BasicEnemy : CharacterBody2D, IMoveable
 		// Move toward player
 		if (player != null)
 		{
+			if (player.HasMeta("untargetable") && (bool)player.GetMeta("untargetable"))
+				return;
+
 			// Calculate intended movement direction
 			var direction = (player.GlobalPosition - GlobalPosition).Normalized();
 

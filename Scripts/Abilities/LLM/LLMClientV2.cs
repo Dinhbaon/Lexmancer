@@ -207,6 +207,26 @@ SUPPORTED ACTIONS:
 10. ""repeat"" - Repeat an action multiple times
    args: count (2-5), interval (0.5-2)
 
+CONDITIONAL EXECUTION (Optional - use sparingly for interesting synergies):
+Add a ""condition"" field to any action to execute it conditionally.
+
+Examples:
+- {{""action"": ""damage"", ""args"": {{""amount"": 40}}, ""condition"": {{""if"": ""target.health < 0.5""}}}} - Execute damage
+- {{""action"": ""chain_to_nearby"", ""args"": {{...}}, ""condition"": {{""if"": ""target.has_status('shocked')""}}}} - Chain if shocked
+- {{""action"": ""spawn_area"", ""args"": {{...}}, ""condition"": {{""if"": ""target.status_stacks('poisoned') >= 3""}}}} - Trigger at 3+ stacks
+
+Supported conditions:
+- ""target.health < 0.5"" - Health percentage checks (<, <=, >, >=)
+- ""target.has_status('burning')"" - Check if target has a status
+- ""target.status_stacks('poisoned') >= 3"" - Check status stack count
+- ""distance < 200"" - Distance between caster and target
+
+WHEN TO USE CONDITIONALS:
+✅ Execute mechanics (bonus damage to low HP enemies)
+✅ Status synergies (explode if target has 3+ poison stacks)
+✅ Combo abilities (chain lightning if target is shocked)
+❌ Don't overuse - only 20-30% of abilities should have conditionals
+
 CRITICAL RULES:
 ⚠️  NEVER create abilities that ONLY do damage
 ⚠️  EVERY ability MUST include interesting mechanics: status effects, area damage, multiple projectiles, piercing, melee shapes, chaining, knockback, healing, repeat, beams
@@ -226,12 +246,19 @@ STRUCTURE:
 
 DESCRIPTION RULES:
 Generate actions FIRST, then write ability ""description"" to match what you created.
-- spawn_melee → mention melee/strike/slash/cleave
-- spawn_projectile count=1 → ""fire a projectile""
-- spawn_projectile count>1 → mention count/""multiple""
-- spawn_area → mention zone/area/pool
-- movement=teleport_strike → mention dash/teleport
-- on_hit apply_status → mention the status effect
+- Mention every action type present (melee/projectile/area/beam).
+- spawn_melee → mention strike/slash/cleave/slam/thrust and the shape (arc/circle/rectangle) when used.
+- movement != ""stationary"" → mention dash/lunge/blink/teleport/backstep/jump.
+- spawn_projectile count=1 → ""fire a projectile"" or ""shoot a bolt"".
+- spawn_projectile count>1 → mention count/""multiple"" and the pattern if not ""single"".
+- projectile piercing=true → mention piercing or ""passes through enemies"".
+- chain_to_nearby → mention chaining to nearby enemies.
+- repeat → mention repeated casts/waves (count if possible).
+- spawn_area → mention zone/area/pool; if lingering_damage>0 mention lingering damage; if growth_time>0 mention expanding/growing.
+- spawn_beam → mention beam/lance/ray; if travel_time>0 mention it travels forward.
+- on_hit apply_status → mention EACH status effect.
+- on_hit knockback → mention push/pull/knock back.
+- on_hit heal → mention healing.
 
 EXAMPLES:
 
@@ -257,7 +284,7 @@ Melee (Fire + Shadow):
 Projectiles (Water + Lightning):
 {{
   ""name"": ""Stormwave"",
-  ""description"": ""Electrified water bolts that spread and chain to enemies."",
+  ""description"": ""Electrified water bolts that spread and chain viciously to shocked enemies."",
   ""color"": ""#1E90FF"",
   ""ability"": {{
     ""primitives"": [""water"", ""lightning""],
@@ -267,10 +294,30 @@ Projectiles (Water + Lightning):
       ""on_hit"": [
         {{""action"": ""damage"", ""args"": {{""amount"": 20}}}},
         {{""action"": ""apply_status"", ""args"": {{""status"": ""shocked"", ""duration"": 4}}}},
-        {{""action"": ""chain_to_nearby"", ""args"": {{""max_chains"": 3, ""range"": 200}}, ""on_hit"": [{{""action"": ""damage"", ""args"": {{""amount"": 15}}}}]}}
+        {{""action"": ""chain_to_nearby"", ""args"": {{""max_chains"": 3, ""range"": 200}}, ""condition"": {{""if"": ""target.has_status('shocked')""}}, ""on_hit"": [{{""action"": ""damage"", ""args"": {{""amount"": 25}}}}]}}
       ]}}]}}],
     ""cooldown"": 1.5,
-    ""description"": ""Fire 3 electrified bolts in a spread that shock and chain to nearby enemies""
+    ""description"": ""Fire 3 electrified bolts in a spread that shock enemies and chain to shocked targets for bonus damage""
+  }}
+}}
+
+Conditional Execute (Poison + Shadow):
+{{
+  ""name"": ""Venom Reaper"",
+  ""description"": ""A toxic strike that reaps heavily poisoned enemies."",
+  ""color"": ""#8B008B"",
+  ""ability"": {{
+    ""primitives"": [""poison"", ""shadow""],
+    ""effects"": [{{""script"": [{{
+      ""action"": ""spawn_melee"",
+      ""args"": {{""shape"": ""arc"", ""range"": 2.2, ""arc_angle"": 140}},
+      ""on_hit"": [
+        {{""action"": ""damage"", ""args"": {{""amount"": 18, ""element"": ""poison""}}}},
+        {{""action"": ""apply_status"", ""args"": {{""status"": ""poisoned"", ""duration"": 5}}}},
+        {{""action"": ""damage"", ""args"": {{""amount"": 45, ""element"": ""shadow""}}, ""condition"": {{""if"": ""target.status_stacks('poisoned') >= 3""}}}}
+      ]}}]}}],
+    ""cooldown"": 2.5,
+    ""description"": ""Slash in an arc applying poison, dealing massive damage if target has 3+ poison stacks""
   }}
 }}
 

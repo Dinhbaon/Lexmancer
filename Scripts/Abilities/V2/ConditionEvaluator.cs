@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Lexmancer.Abilities.Execution;
 using Lexmancer.Combat;
@@ -73,7 +74,7 @@ public static class ConditionEvaluator
 			return false;
 
 		string op = match.Groups[1].Value;
-		float threshold = float.Parse(match.Groups[2].Value);
+		float threshold = float.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
 
 		return op switch
 		{
@@ -151,7 +152,7 @@ public static class ConditionEvaluator
 			return false;
 
 		string op = match.Groups[1].Value;
-		float threshold = float.Parse(match.Groups[2].Value);
+		float threshold = float.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
 
 		var targetPos = (ctx.Target as Node2D)?.GlobalPosition ?? ctx.Position;
 		var casterPos = (ctx.Caster as Node2D)?.GlobalPosition ?? Vector2.Zero;
