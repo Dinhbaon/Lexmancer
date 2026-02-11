@@ -178,8 +178,9 @@ public partial class MeleeAttackNode : Area2D
 
         AddChild(collision);
 
-        // Rotate the entire Area2D to match direction (except for circle)
-        if (Shape.ToLower() != "circle")
+        // Rotate the entire Area2D to match direction
+        // Dash uses a line shape regardless of melee shape, so it must rotate too.
+        if (isDash || Shape.ToLower() != "circle")
         {
             Rotation = Direction.Angle();
         }

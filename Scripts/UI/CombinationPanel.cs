@@ -766,6 +766,12 @@ public partial class CombinationPanel : Control
 				// Track element ID for flavor updates
 				lastCreatedElementId = newElement.Id;
 
+				// Ensure element is cached so it has a valid ID before adding to inventory
+				if (newElement.Id <= 0)
+				{
+					lastCreatedElementId = ServiceLocator.Instance.Elements.CacheElement(newElement);
+				}
+
 				// Use the inventory's combine method
 				var result = inventory.CombineElements(selectedElement1, selectedElement2, newElement);
 

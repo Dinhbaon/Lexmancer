@@ -260,9 +260,10 @@ public static class AbilitySchema
           ""then"": {
             ""properties"": {
               ""args"": {
-                ""required"": [""amount""],
+                ""required"": [""amount"", ""target""],
                 ""properties"": {
-                  ""amount"": {""type"": ""number"", ""minimum"": 10, ""maximum"": 50}
+                  ""amount"": {""type"": ""number"", ""minimum"": 10, ""maximum"": 50},
+                  ""target"": {""enum"": [""caster"", ""target""]}
                 }
               }
             }

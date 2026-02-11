@@ -153,6 +153,22 @@ public class LLMClientV2
         string element2Name,
         string abilityMechanics)
     {
+        var config = ServiceLocator.Instance?.Config;
+        if (config == null || !config.UseLLMFlavor)
+        {
+            GD.Print("LLM flavor generation disabled (UseLLMFlavor=false).");
+            var fallbackName = string.IsNullOrWhiteSpace(element2Name)
+                ? element1Name
+                : $"{element1Name}-{element2Name}";
+            return new FlavorResponse
+            {
+                Name = fallbackName,
+                FlavorDescription = $"A fusion of {element1Name} and {element2Name}",
+                Description = abilityMechanics,
+                ColorHex = "#808080"
+            };
+        }
+
         string jsonResponse = null;
         try
         {
@@ -420,7 +436,7 @@ SUPPORTED ACTIONS:
 5. ""damage"" - Deal damage (ONLY in on_hit/on_expire)
    args: amount (1-100), element (""fire""/""water""/""earth""/""lightning""/""poison""/""wind""/""shadow""/""light""/""neutral""), area_radius (optional)
 
-6. ""heal"" - Restore health (ONLY in on_hit/on_expire)
+6. ""heal"" - Restore health (ONLY in on_hit/on_expire). Optional args.target = ""caster"" or ""target"".
    args: amount (10-50)
 
 7. ""apply_status"" - Apply status effect (ONLY in on_hit/on_expire)

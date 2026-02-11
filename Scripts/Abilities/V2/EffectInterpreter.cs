@@ -512,7 +512,14 @@ public class EffectInterpreter
         int amount = GetArg(args, "amount", 20);
         amount = Math.Clamp(amount, 10, 50);
 
-        var healTarget = ctx.Target ?? ctx.Caster;
+        // Support explicit heal target: "caster" or "target"
+        string targetHint = GetArg(args, "target", string.Empty);
+        Node healTarget = targetHint?.ToLowerInvariant() switch
+        {
+            "target" => ctx.Target,
+            "caster" => ctx.Caster,
+            _ => ctx.Caster ?? ctx.Target
+        };
         if (!IsHealAllowed(ctx.Caster, healTarget))
         {
             var casterName = ctx.Caster?.Name ?? "null";

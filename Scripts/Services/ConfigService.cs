@@ -14,6 +14,7 @@ public partial class ConfigService : Node
 	// ==================== LLM SETTINGS ====================
 
 	public bool UseLLM { get; private set; } = true;
+	public bool UseLLMFlavor { get; private set; } = false;
 	public string LLMBaseUrl { get; private set; } = "http://localhost:11434";
 	public string LLMModel { get; private set; } = "qwen2.5:7b";
 
@@ -96,6 +97,15 @@ public partial class ConfigService : Node
 		{
 			UseLLM = enabled;
 			GD.Print($"LLM usage: {enabled}");
+		}
+	}
+
+	public void SetUseLLMFlavor(bool enabled)
+	{
+		if (UseLLMFlavor != enabled)
+		{
+			UseLLMFlavor = enabled;
+			GD.Print($"LLM flavor usage: {enabled}");
 		}
 	}
 
