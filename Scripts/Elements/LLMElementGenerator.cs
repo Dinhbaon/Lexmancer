@@ -5,19 +5,22 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Lexmancer.Abilities.V2;
+using Lexmancer.Abilities.Procedural;
 using Lexmancer.Core;
 using Lexmancer.Services;
 
 namespace Lexmancer.Elements;
 
 /// <summary>
-/// Generates element abilities using LLM
-/// Bridges the gap between element system and primitive-based LLM generation
+/// Generates element abilities using hybrid procedural + LLM approach
+/// Instant procedural mechanics + async LLM flavor text
 /// </summary>
 public class LLMElementGenerator
 {
     private bool useLLM;
     private readonly LLMClientV2 llmClient;
+    private readonly ProceduralAbilityComposer proceduralComposer;
+    private readonly ProceduralNameGenerator nameGenerator;
 
     public LLMElementGenerator(
         string playerId = "player_001",
@@ -27,6 +30,10 @@ public class LLMElementGenerator
         LLMClientV2 llmClient = null)
     {
         this.useLLM = useLLM;
+
+        // Initialize procedural generators (always available)
+        this.proceduralComposer = new ProceduralAbilityComposer();
+        this.nameGenerator = new ProceduralNameGenerator();
 
         // Allow DI of a shared client so transport selection is centralized.
         if (llmClient != null)
@@ -45,6 +52,8 @@ public class LLMElementGenerator
         {
             GD.Print("LLMElementGenerator initialized with LLM disabled (using fallbacks)");
         }
+
+        GD.Print("Procedural generators initialized (always available)");
     }
 
     /// <summary>
@@ -83,15 +92,13 @@ public class LLMElementGenerator
 	/// <summary>
 	/// Generate a completely new element from combining two elements (name + ability)
 	/// This is the main method for dynamic element creation!
+	///
+	/// HYBRID MODE: Generates mechanics procedurally (instant) + LLM flavor (async)
+	/// FULL LLM MODE: Uses legacy full LLM generation (slow)
+	/// PURE PROCEDURAL MODE: Only procedural, no LLM
 	/// </summary>
 	public async Task<Element> GenerateElementFromCombinationAsync(int element1Id, int element2Id, bool forceNew = false)
 	{
-		if (!useLLM)
-		{
-			GD.PrintErr("LLM is disabled - cannot generate dynamic elements");
-			return null;
-		}
-
 		try
 		{
 			// Get elements from service
@@ -104,20 +111,133 @@ public class LLMElementGenerator
 				return null;
 			}
 
-			GD.Print($"🔮 Generating NEW element from {elem1.Name} + {elem2.Name}...");
+			// Check generation mode
+			var mode = ServiceLocator.Instance.Config.CurrentGenerationMode;
 
-			// Generate the element and ability using LLM
-			var result = await GenerateElementWithLLMAsync(elem1, elem2);
+			// LEGACY MODE: Full LLM generation (original behavior)
+			if (mode == Services.GenerationMode.FullLLMMode)
+			{
+				if (!useLLM)
+				{
+					GD.PrintErr("LLM is disabled - cannot use FullLLMMode");
+					return null;
+				}
 
-			GD.Print($"✨ Created element: {result.Name}");
+				GD.Print("Using Full LLM generation mode (legacy)");
+				GD.Print($"🔮 Generating NEW element from {elem1.Name} + {elem2.Name}...");
+				var result = await GenerateElementWithLLMAsync(elem1, elem2);
+				GD.Print($"✨ Created element: {result.Name}");
+				return result;
+			}
 
-			return result;
+			// PROCEDURAL/HYBRID MODE: Generate mechanics procedurally
+			GD.Print($"⚡ Generating element from {elem1.Name} + {elem2.Name} (mode: {mode})");
+
+			int seed = HashElements(element1Id, element2Id);
+
+			// STEP 1: Generate ability mechanically (INSTANT)
+			AbilityV2 ability = proceduralComposer.ComposeAbility(elem1, elem2, seed);
+
+			// STEP 2: Generate procedural name/description (fallback)
+			string procName = nameGenerator.GenerateName(elem1, elem2, seed);
+			string procDesc = nameGenerator.GenerateDescription(ability);
+			string procColor = nameGenerator.BlendColors(elem1.ColorHex, elem2.ColorHex);
+
+			GD.Print($"✅ Procedural generation complete:");
+			GD.Print($"   Name: {procName}");
+			GD.Print($"   Color: {procColor}");
+			GD.Print($"   Ability: {ability.Description}");
+
+			// STEP 3: Create element immediately with procedural values
+			var newElement = new Element
+			{
+				Name = procName,
+				Description = procDesc,
+				ColorHex = procColor,
+				Tier = Math.Max(elem1.Tier, elem2.Tier) + 1,
+				Recipe = new List<int> { elem1.Id, elem2.Id },
+				Ability = ability,
+				Properties = ElementProperties.Merge(
+					elem1.Properties ?? ElementProperties.CreateDefault(),
+					elem2.Properties ?? ElementProperties.CreateDefault()
+				)
+			};
+
+			// STEP 4: Cache immediately (for database persistence)
+			int elementId = ServiceLocator.Instance.Elements.CacheElement(newElement);
+			GD.Print($"✅ Element cached with ID: {elementId}");
+
+			// STEP 5: LLM flavor request (HYBRID mode - WAIT for it)
+			if (mode == Services.GenerationMode.HybridMode && useLLM)
+			{
+				GD.Print("🎨 Requesting LLM flavor text (waiting)...");
+
+				// WAIT for LLM to complete before returning
+				var enhancedElement = await RequestLLMFlavorAsync(newElement, elem1, elem2, ability);
+
+				// Return the LLM-enhanced version
+				return enhancedElement ?? newElement; // Fallback to procedural if LLM fails
+			}
+			else if (mode == Services.GenerationMode.PureProceduralMode)
+			{
+				GD.Print("✓ Pure procedural mode - no LLM flavor");
+			}
+
+			return newElement;
 		}
 		catch (Exception ex)
 		{
 			GD.PrintErr($"Failed to generate element combination: {ex.Message}");
+			GD.PrintErr($"Stack trace: {ex.StackTrace}");
 			return null;
 		}
+	}
+
+	/// <summary>
+	/// Request LLM flavor text and return the enhanced element
+	/// Returns null if LLM fails (caller should use original element)
+	/// </summary>
+	private async Task<Element> RequestLLMFlavorAsync(Element element, Element elem1, Element elem2, AbilityV2 ability)
+	{
+		try
+		{
+			GD.Print($"🔮 Generating LLM flavor for {element.Name}...");
+
+			// Use LLMClientV2.GenerateFlavorTextAsync (from Phase 5)
+			var flavor = await llmClient.GenerateFlavorTextAsync(
+				elem1.Name, elem2.Name, ability.Description);
+
+			// Update only name/desc/color, keep ability unchanged
+			element.Name = flavor.Name;
+			element.Description = flavor.Description; // Technical description with stats
+			element.ColorHex = flavor.ColorHex;
+
+			// Element is already cached with ID, no need to update again
+			// UpdateElement and ElementFlavorUpdated signal not available in this branch
+
+			GD.Print($"✨ Updated with LLM flavor: {flavor.Name}");
+			GD.Print($"   New description: {flavor.Description}");
+			GD.Print("   Ability JSON:");
+			GD.Print(ability?.ToJson() ?? "   <null ability>");
+
+			return element; // Return the enhanced element
+		}
+		catch (Exception ex)
+		{
+			GD.Print($"⚠️ LLM flavor failed, keeping procedural name: {ex.Message}");
+			return null; // Signal failure - caller should use original procedural element
+		}
+	}
+
+	/// <summary>
+	/// Hash two element IDs to create a deterministic seed
+	/// </summary>
+	private int HashElements(int id1, int id2)
+	{
+		// Sort IDs to ensure same seed regardless of order
+		int min = Math.Min(id1, id2);
+		int max = Math.Max(id1, id2);
+		return (min * 1000) + max;
 	}
 
 	/// <summary>

@@ -703,7 +703,14 @@ public partial class CombinationPanel : Control
 		// Show loading message
 		resultLabel.Text = "Combining...";
 		resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
-		llmOutputLabel.Text = "🔮 Generating element with LLM...";
+
+		var mode = ServiceLocator.Instance.Config.CurrentGenerationMode;
+		llmOutputLabel.Text = mode switch
+		{
+			Services.GenerationMode.HybridMode => "⚡ Generating mechanics... (LLM flavor will follow)",
+			Services.GenerationMode.FullLLMMode => "🔮 Generating element with LLM...",
+			_ => "⚡ Generating procedural element..."
+		};
 
 		var startTime = DateTime.Now;
 
@@ -747,27 +754,35 @@ public partial class CombinationPanel : Control
 
 				if (result != null)
 				{
-					// Show success
-					resultLabel.Text = $"Created: {newElement.Name}!";
+					// Show success (instant feedback)
+					resultLabel.Text = mode == Services.GenerationMode.HybridMode
+						? $"Created: {newElement.Name}! (awaiting flavor...)"
+						: $"Created: {newElement.Name}!";
 					resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
-					// Display LLM output
-					var llmOutput = forceNew
-						? $"✨ New Variation Generated! ({elapsed:F2}s)\n\n"
-						: $"✨ Element Created! ({elapsed:F2}s)\n\n";
-					llmOutput += $"Element: {newElement.Name}\n";
-					llmOutput += $"Description: {newElement.Description}\n";
-					llmOutput += $"Color: {newElement.ColorHex}\n";
-					llmOutput += $"Tier: {newElement.Tier}\n\n";
+					// Display generation output
+					var output = mode == Services.GenerationMode.FullLLMMode
+						? $"✨ Full LLM Generation! ({elapsed:F2}s)\n\n"
+						: $"⚡ Procedural Generation! ({elapsed:F3}s)\n\n";
+
+					output += $"Element: {newElement.Name}\n";
+					output += $"Description: {newElement.Description}\n";
+					output += $"Color: {newElement.ColorHex}\n";
+					output += $"Tier: {newElement.Tier}\n\n";
 
 					if (newElement.Ability != null)
 					{
-						llmOutput += "Ability: Generated\n";
-						llmOutput += $"{newElement.Ability.Description}\n";
-						llmOutput += $"Cooldown: {newElement.Ability.Cooldown}s\n";
+						output += "Ability:\n";
+						output += $"{newElement.Ability.Description}\n";
+						output += $"Cooldown: {newElement.Ability.Cooldown}s\n";
 					}
 
-					llmOutputLabel.Text = llmOutput;
+					if (mode == Services.GenerationMode.HybridMode)
+					{
+						output += "\n🎨 Requesting LLM flavor text...\n";
+					}
+
+					llmOutputLabel.Text = output;
 					llmOutputLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
 					// Clear selections

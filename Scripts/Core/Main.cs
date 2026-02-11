@@ -28,6 +28,7 @@ public partial class Main : Node2D
 		UseLLM = true;
 		config.SetUseLLM(UseLLM);
 		config.SetLLMModelName("granite-3.1-3b-a800m-instruct-Q4_K_M.gguf");
+		config.LoadProceduralSettings(); // Initialize procedural generation settings
 		config.PrintConfig();
 
 		CallDeferred(nameof(InitializeGameSystems));

@@ -34,6 +34,13 @@ public partial class ConfigService : Node
 
 	public bool CacheGeneratedAbilities { get; private set; } = true;
 
+	// ==================== PROCEDURAL GENERATION SETTINGS ====================
+
+	public GenerationMode CurrentGenerationMode { get; private set; } = GenerationMode.HybridMode;
+	public bool UseLLMFlavor => CurrentGenerationMode == GenerationMode.HybridMode;
+	public bool UseFullLLM => CurrentGenerationMode == GenerationMode.FullLLMMode;
+	public bool UseProcedural => CurrentGenerationMode != GenerationMode.FullLLMMode;
+
 	// ==================== DEBUG SETTINGS ====================
 
 	public bool VerboseLogging { get; private set; } = true;
@@ -210,6 +217,15 @@ public partial class ConfigService : Node
 		}
 	}
 
+	public void SetGenerationMode(GenerationMode mode)
+	{
+		if (CurrentGenerationMode != mode)
+		{
+			CurrentGenerationMode = mode;
+			GD.Print($"Generation mode: {mode}");
+		}
+	}
+
 	// ==================== BULK CONFIGURATION ====================
 
 	/// <summary>
@@ -219,6 +235,26 @@ public partial class ConfigService : Node
 	{
 		// TODO: Load from ProjectSettings or config file
 		GD.Print("Loading config from project settings (not implemented yet)");
+	}
+
+	/// <summary>
+	/// Load procedural generation settings from config file or environment
+	/// </summary>
+	public void LoadProceduralSettings()
+	{
+		// For now, use default HybridMode
+		// In future, could load from file or environment variable
+		string modeStr = System.Environment.GetEnvironmentVariable("GENERATION_MODE") ?? "Hybrid";
+
+		CurrentGenerationMode = modeStr switch
+		{
+			"Pure" => GenerationMode.PureProceduralMode,
+			"Hybrid" => GenerationMode.HybridMode,
+			"FullLLM" => GenerationMode.FullLLMMode,
+			_ => GenerationMode.HybridMode
+		};
+
+		GD.Print($"Generation mode: {CurrentGenerationMode}");
 	}
 
 	/// <summary>
@@ -289,6 +325,7 @@ public partial class ConfigService : Node
 			}
 			GD.Print($"  Cache Abilities: {CacheGeneratedAbilities}");
 		}
+		GD.Print($"Generation Mode: {CurrentGenerationMode}");
 		GD.Print($"Verbose Logging: {VerboseLogging}");
 		GD.Print("==========================");
 	}
@@ -354,4 +391,14 @@ public enum ConfigPreset
 	Testing,      // LLM enabled via HTTP
 	Production,   // LLM enabled via direct inference
 	LowEnd        // Minimal features for low-end systems
+}
+
+/// <summary>
+/// Generation modes for element abilities
+/// </summary>
+public enum GenerationMode
+{
+	PureProceduralMode,  // Only procedural, no LLM at all (fastest, offline)
+	HybridMode,          // Procedural mechanics + LLM flavor (default, best of both)
+	FullLLMMode          // Complete LLM generation (legacy, slowest, most creative)
 }

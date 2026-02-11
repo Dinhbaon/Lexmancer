@@ -142,6 +142,31 @@ public class PlayerElementInventory
 			return null;
 		}
 
+		// Ensure result element is cached and has a valid ID before adding to inventory.
+		// This guards against callers forgetting to cache LLM-generated elements.
+		if (resultElement.Ability != null && string.IsNullOrEmpty(resultElement.AbilityJson))
+		{
+			resultElement.AbilityJson = resultElement.Ability.ToJson();
+		}
+
+		if (resultElement.Id <= 0)
+		{
+			try
+			{
+				ServiceLocator.Instance.Elements.CacheElement(resultElement);
+			}
+			catch (Exception ex)
+			{
+				GD.PrintErr($"Failed to cache result element: {ex.Message}");
+				return null;
+			}
+		}
+		else if (!ServiceLocator.Instance.Elements.HasElement(resultElement.Id))
+		{
+			// Update cache/DB if element exists in memory but not in the service.
+			ServiceLocator.Instance.Elements.CacheElement(resultElement);
+		}
+
 		// Consume ingredients
 		ConsumeElement(element1Id, 1);
 		ConsumeElement(element2Id, 1);

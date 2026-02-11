@@ -66,6 +66,12 @@ public class Element
 	public string AbilityJson { get; set; }
 
 	/// <summary>
+	/// Procedural generation properties (used by ProceduralAbilityComposer)
+	/// </summary>
+	[JsonPropertyName("properties")]
+	public ElementProperties Properties { get; set; }
+
+	/// <summary>
 	/// Schema version for future migrations
 	/// </summary>
 	[JsonPropertyName("version")]
