@@ -12,7 +12,6 @@ namespace Lexmancer.Elements;
 
 /// <summary>
 /// Generates element abilities using LLM
-/// Bridges the gap between element system and primitive-based LLM generation
 /// </summary>
 public class LLMElementGenerator
 {
@@ -43,7 +42,7 @@ public class LLMElementGenerator
 
         if (!useLLM)
         {
-            GD.Print("LLMElementGenerator initialized with LLM disabled (using fallbacks)");
+            GD.Print("LLMElementGenerator initialized with LLM disabled");
         }
     }
 
@@ -83,15 +82,10 @@ public class LLMElementGenerator
 	/// <summary>
 	/// Generate a completely new element from combining two elements (name + ability)
 	/// This is the main method for dynamic element creation!
+	/// Uses LLM to generate everything.
 	/// </summary>
 	public async Task<Element> GenerateElementFromCombinationAsync(int element1Id, int element2Id, bool forceNew = false)
 	{
-		if (!useLLM)
-		{
-			GD.PrintErr("LLM is disabled - cannot generate dynamic elements");
-			return null;
-		}
-
 		try
 		{
 			// Get elements from service
@@ -104,18 +98,22 @@ public class LLMElementGenerator
 				return null;
 			}
 
+			if (!useLLM)
+			{
+				GD.PrintErr("LLM is disabled - cannot generate elements");
+				return null;
+			}
+
+			GD.Print("Using Full LLM generation mode");
 			GD.Print($"🔮 Generating NEW element from {elem1.Name} + {elem2.Name}...");
-
-			// Generate the element and ability using LLM
 			var result = await GenerateElementWithLLMAsync(elem1, elem2);
-
 			GD.Print($"✨ Created element: {result.Name}");
-
 			return result;
 		}
 		catch (Exception ex)
 		{
 			GD.PrintErr($"Failed to generate element combination: {ex.Message}");
+			GD.PrintErr($"Stack trace: {ex.StackTrace}");
 			return null;
 		}
 	}
@@ -189,5 +187,16 @@ Generate the element with these properties:
 4. An ability (using the effect scripting system)
 
 Return as JSON.";
+	}
+
+	/// <summary>
+	/// Hash two element IDs to create a deterministic seed
+	/// </summary>
+	private int HashElements(int id1, int id2)
+	{
+		// Sort IDs to ensure same seed regardless of order
+		int min = Math.Min(id1, id2);
+		int max = Math.Max(id1, id2);
+		return (min * 1000) + max;
 	}
 }

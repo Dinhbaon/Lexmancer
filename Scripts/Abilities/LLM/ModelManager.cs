@@ -11,6 +11,13 @@ using Lexmancer.Services;
 
 namespace Lexmancer.Abilities.LLM;
 
+public enum LlmGrammarKind
+{
+	Element,
+	Flavor,
+	Json
+}
+
 /// <summary>
 /// Singleton that manages the lifecycle of the bundled LLamaSharp model.
 /// Loads GGUF model from game assets, provides thread-safe inference access.
@@ -87,7 +94,15 @@ public partial class ModelManager : Node
 	/// Run inference with the loaded model. Thread-safe via semaphore.
 	/// ALWAYS enforces JSON grammar to guarantee valid output.
 	/// </summary>
-	public async Task<string> InferAsync(string prompt, CancellationToken cancellationToken = default)
+	public Task<string> InferAsync(string prompt, CancellationToken cancellationToken = default)
+	{
+		return InferAsync(prompt, LlmGrammarKind.Element, cancellationToken);
+	}
+
+	/// <summary>
+	/// Run inference with the loaded model using the specified grammar.
+	/// </summary>
+	public async Task<string> InferAsync(string prompt, LlmGrammarKind grammarKind, CancellationToken cancellationToken = default)
 	{
 		if (!IsLoaded)
 			throw new InvalidOperationException("Model not loaded. Call InitializeAsync first.");
@@ -98,14 +113,21 @@ public partial class ModelManager : Node
 			var executor = new StatelessExecutor(_model, _modelParams);
 
 			// ALWAYS use grammar constraint - guarantees valid JSON
+			var grammarText = grammarKind switch
+			{
+				LlmGrammarKind.Flavor => GetFlavorGrammar(),
+				LlmGrammarKind.Json => GetJsonGrammar(),
+				_ => GetElementGrammar()
+			};
+
 			var samplingPipeline = new DefaultSamplingPipeline
 			{
 				Temperature = Config.LLMTemperature,
 				RepeatPenalty = Config.LLMRepeatPenalty,
-				Grammar = new Grammar(GetElementGrammar(), "root")
+				Grammar = new Grammar(grammarText, "root")
 			};
 
-			GD.Print($"Using JSON grammar constraint with repeat_penalty={Config.LLMRepeatPenalty}");
+			GD.Print($"Using {grammarKind} grammar constraint with repeat_penalty={Config.LLMRepeatPenalty}");
 
 			var inferenceParams = new InferenceParams
 			{
@@ -162,6 +184,23 @@ public partial class ModelManager : Node
 
 		var grammarText = File.ReadAllText(grammarPath);
 		GD.Print($"Loaded element grammar from: {grammarPath} ({grammarText.Length} bytes)");
+		return grammarText;
+	}
+
+	/// <summary>
+	/// GBNF grammar for flavor-only generation (name/description/color).
+	/// </summary>
+	private string GetFlavorGrammar()
+	{
+		var grammarPath = ProjectSettings.GlobalizePath("res://Assets/LLM/flavor_grammar.gbnf");
+		if (!File.Exists(grammarPath))
+		{
+			GD.PrintErr($"Flavor grammar file not found: {grammarPath}");
+			return GetJsonGrammar();
+		}
+
+		var grammarText = File.ReadAllText(grammarPath);
+		GD.Print($"Loaded flavor grammar from: {grammarPath} ({grammarText.Length} bytes)");
 		return grammarText;
 	}
 

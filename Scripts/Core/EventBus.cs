@@ -152,6 +152,9 @@ public partial class EventBus : Node
 	/// <summary>Emitted when LLM service initialization status changes</summary>
 	[Signal] public delegate void LLMServiceStatusChangedEventHandler(bool isReady, string statusMessage);
 
+	/// <summary>Emitted when LLM flavor text is updated for an element (async update)</summary>
+	[Signal] public delegate void ElementFlavorUpdatedEventHandler(int elementId);
+
 	// ==================== ABILITY EVENTS ====================
 
 	/// <summary>Emitted when a projectile is spawned</summary>

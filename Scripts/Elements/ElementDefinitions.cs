@@ -25,6 +25,9 @@ public static class ElementDefinitions
 		// Create base elements (without IDs - database will assign them)
 		var baseElements = CreateBaseElementsList();
 
+		// Initialize element properties for procedural generation
+		InitializeElementProperties(baseElements);
+
 		// Check for existing base elements to avoid duplicates
 		var existingBaseElements = ServiceLocator.Instance.Elements.GetElementsByTier(1);
 		var existingByPrimitive = new Dictionary<PrimitiveType, Element>();
@@ -60,6 +63,105 @@ public static class ElementDefinitions
 		}
 
 		return baseElementIds;
+	}
+
+	/// <summary>
+	/// Initialize element properties for procedural generation
+	/// Called after base elements are created
+	/// </summary>
+	private static void InitializeElementProperties(List<Element> baseElements)
+	{
+		foreach (var element in baseElements)
+		{
+			if (!element.Primitive.HasValue)
+				continue;
+
+			element.Properties = element.Primitive.Value switch
+			{
+				// PURE STATUS EFFECT IDENTITY - Elements differ ONLY by status effects
+				// Everything else is equal:
+				// - Damage: 17-21 (all combat elements)
+				// - Delivery: 33% projectile/melee/area (pure RNG)
+				// - Complexity: 50% chance for all features (pure RNG)
+				// - NO preferences - elements don't favor any behaviors
+
+				// Fire: Burning status only
+				PrimitiveType.Fire => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = "burning",
+					StatusDuration = 3.0f
+				},
+
+				// Water: Slowing status only
+				PrimitiveType.Ice => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = "slowed",
+					StatusDuration = 4.0f
+				},
+
+				// Earth: Stunning status only
+				PrimitiveType.Earth => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = "stunned",
+					StatusDuration = 2.0f
+				},
+
+				// Lightning: Shocking status only
+				PrimitiveType.Lightning => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = "shocked",
+					StatusDuration = 3.0f
+				},
+
+				// Poison: Poisoning status only
+				PrimitiveType.Poison => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = "poisoned",
+					StatusDuration = 5.0f
+				},
+
+				// Wind: Pure damage, no status
+				PrimitiveType.Wind => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = null,
+					StatusDuration = 0f
+				},
+
+				// Shadow: Pure damage, no status
+				PrimitiveType.Shadow => new ElementProperties
+				{
+					MinDamage = 17,
+					MaxDamage = 21,
+					PrimaryStatus = null,
+					StatusDuration = 0f
+				},
+
+				// Light: Healing element (special case - no damage)
+				PrimitiveType.Light => new ElementProperties
+				{
+					MinDamage = 0,
+					MaxDamage = 0,
+					PrimaryStatus = null,
+					StatusDuration = 0f
+				},
+
+				_ => ElementProperties.CreateDefault()
+			};
+
+			GD.Print($"Initialized properties for {element.Name}: {element.Properties}");
+		}
 	}
 
 	/// <summary>

@@ -145,6 +145,11 @@ public partial class Main : Node2D
 		gameOverScreen.Name = "GameOverScreen";
 		uiLayer.AddChild(gameOverScreen);
 
+		// Pause button (icon only, top-right)
+		var pauseButton = new PauseButton();
+		pauseButton.Name = "PauseButton";
+		uiLayer.AddChild(pauseButton);
+
 		GD.Print("UI created in CanvasLayer");
 	}
 

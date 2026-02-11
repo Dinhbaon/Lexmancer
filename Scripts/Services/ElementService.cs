@@ -206,6 +206,29 @@ public partial class ElementService : Node
 	}
 
 	/// <summary>
+	/// Update an existing element (both runtime cache and database)
+	/// Element must have a valid ID already
+	/// </summary>
+	public void UpdateElement(Element element)
+	{
+		ThrowIfNotInitialized();
+
+		if (element == null)
+			throw new ArgumentNullException(nameof(element));
+
+		if (element.Id <= 0)
+			throw new ArgumentException("Element must have a valid ID to update", nameof(element));
+
+		// Update in database
+		_database.CacheElement(element);
+
+		// Update runtime cache
+		_runtimeCache[element.Id] = element;
+
+		GD.Print($"Updated element: ID {element.Id} ({element.Name})");
+	}
+
+	/// <summary>
 	/// Preload elements into runtime cache
 	/// </summary>
 	public void PreloadElements(List<int> elementIds)

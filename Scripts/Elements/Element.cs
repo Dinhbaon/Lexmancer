@@ -110,6 +110,13 @@ public class Element
 	}
 
 	/// <summary>
+	/// Element properties for procedural generation (not serialized)
+	/// Set for base elements, merged for combined elements
+	/// </summary>
+	[JsonIgnore]
+	public ElementProperties Properties { get; set; }
+
+	/// <summary>
 	/// Lazy-loaded ability from AbilityJson
 	/// </summary>
 	[JsonIgnore]

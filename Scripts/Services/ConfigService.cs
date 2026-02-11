@@ -34,6 +34,10 @@ public partial class ConfigService : Node
 
 	public bool CacheGeneratedAbilities { get; private set; } = true;
 
+	// ==================== GENERATION SETTINGS ====================
+
+	public GenerationMode CurrentGenerationMode { get; private set; } = GenerationMode.FullLLMMode;
+
 	// ==================== DEBUG SETTINGS ====================
 
 	public bool VerboseLogging { get; private set; } = true;
@@ -210,6 +214,15 @@ public partial class ConfigService : Node
 		}
 	}
 
+	public void SetGenerationMode(GenerationMode mode)
+	{
+		if (CurrentGenerationMode != mode)
+		{
+			CurrentGenerationMode = mode;
+			GD.Print($"Generation mode: {mode}");
+		}
+	}
+
 	// ==================== BULK CONFIGURATION ====================
 
 	/// <summary>
@@ -220,6 +233,7 @@ public partial class ConfigService : Node
 		// TODO: Load from ProjectSettings or config file
 		GD.Print("Loading config from project settings (not implemented yet)");
 	}
+
 
 	/// <summary>
 	/// Apply quick preset configurations
@@ -289,6 +303,7 @@ public partial class ConfigService : Node
 			}
 			GD.Print($"  Cache Abilities: {CacheGeneratedAbilities}");
 		}
+		GD.Print($"Generation Mode: {CurrentGenerationMode}");
 		GD.Print($"Verbose Logging: {VerboseLogging}");
 		GD.Print("==========================");
 	}
@@ -354,4 +369,12 @@ public enum ConfigPreset
 	Testing,      // LLM enabled via HTTP
 	Production,   // LLM enabled via direct inference
 	LowEnd        // Minimal features for low-end systems
+}
+
+/// <summary>
+/// Generation modes for element abilities
+/// </summary>
+public enum GenerationMode
+{
+	FullLLMMode          // Complete LLM generation
 }

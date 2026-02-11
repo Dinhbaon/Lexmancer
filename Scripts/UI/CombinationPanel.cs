@@ -51,6 +51,7 @@ public partial class CombinationPanel : Control
 	private bool useLLM = true; // Toggle for LLM generation (synced with ConfigService)
 	private bool isLLMStatusSubscribed = false;
 	private LLMService llmService;
+	private int lastCreatedElementId = 0; // Track last created element for flavor updates
 
 	public override void _Ready()
 	{
@@ -100,6 +101,12 @@ public partial class CombinationPanel : Control
 		{
 			GD.PrintErr("LLMService not found; UI generation unavailable");
 		}
+
+		// Subscribe to flavor updates
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ElementFlavorUpdated += OnFlavorUpdated;
+		}
 	}
 
 	public override void _ExitTree()
@@ -108,6 +115,13 @@ public partial class CombinationPanel : Control
 		{
 			EventBus.Instance.LLMServiceStatusChanged -= OnLLMServiceStatusChanged;
 		}
+
+		// Unsubscribe from flavor updates
+		if (EventBus.Instance != null)
+		{
+			EventBus.Instance.ElementFlavorUpdated -= OnFlavorUpdated;
+		}
+
 		base._ExitTree();
 	}
 
@@ -123,7 +137,22 @@ public partial class CombinationPanel : Control
 
 	private void TogglePanel()
 	{
-		isOpen = !isOpen;
+		SetOpen(!isOpen);
+	}
+
+	public bool IsOpen => isOpen;
+
+	public void ClosePanel()
+	{
+		SetOpen(false);
+	}
+
+	private void SetOpen(bool open)
+	{
+		if (isOpen == open)
+			return;
+
+		isOpen = open;
 		Visible = isOpen;
 
 		// Pause/unpause game
@@ -703,6 +732,8 @@ public partial class CombinationPanel : Control
 		// Show loading message
 		resultLabel.Text = "Combining...";
 		resultLabel.AddThemeColorOverride("font_color", Colors.Yellow);
+
+		// Update message based on generation mode
 		llmOutputLabel.Text = "🔮 Generating element with LLM...";
 
 		var startTime = DateTime.Now;
@@ -725,22 +756,15 @@ public partial class CombinationPanel : Control
 			ServiceLocator.Instance.Config.SetUseLLM(true);
 			llmGenerator.SetUseLLM(true);
 
-			// Use LLM to generate the element (name + ability)
-			llmOutputLabel.Text = forceNew
-				? "🔮 Generating NEW element variation..."
-				: "🔮 Asking LLM to create new element...";
+			// Generate the element using LLM
 			newElement = await llmGenerator.GenerateElementFromCombinationAsync(selectedElement1, selectedElement2, forceNew: true);
 
 			if (newElement != null)
 			{
 				var elapsed = (DateTime.Now - startTime).TotalSeconds;
 
-				// Ensure element is cached and has an ID before adding to inventory
-					if (newElement.Id <= 0)
-					{
-						ServiceLocator.Instance.Elements.CacheElement(newElement);
-						GD.Print($"Cached new element: {newElement.Name}");
-					}
+				// Track element ID for flavor updates
+				lastCreatedElementId = newElement.Id;
 
 				// Use the inventory's combine method
 				var result = inventory.CombineElements(selectedElement1, selectedElement2, newElement);
@@ -751,23 +775,23 @@ public partial class CombinationPanel : Control
 					resultLabel.Text = $"Created: {newElement.Name}!";
 					resultLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
-					// Display LLM output
-					var llmOutput = forceNew
-						? $"✨ New Variation Generated! ({elapsed:F2}s)\n\n"
-						: $"✨ Element Created! ({elapsed:F2}s)\n\n";
-					llmOutput += $"Element: {newElement.Name}\n";
-					llmOutput += $"Description: {newElement.Description}\n";
-					llmOutput += $"Color: {newElement.ColorHex}\n";
-					llmOutput += $"Tier: {newElement.Tier}\n\n";
+					// Display generation output
+					var output = $"✨ Full LLM Generation! ({elapsed:F2}s)\n\n";
+
+					output += $"Element: {newElement.Name}\n";
+					output += $"Description: {newElement.Description}\n";
+					output += $"Color: {newElement.ColorHex}\n";
+					output += $"Tier: {newElement.Tier}\n\n";
 
 					if (newElement.Ability != null)
 					{
-						llmOutput += "Ability: Generated\n";
-						llmOutput += $"{newElement.Ability.Description}\n";
-						llmOutput += $"Cooldown: {newElement.Ability.Cooldown}s\n";
+						output += "Ability:\n";
+						output += $"{newElement.Ability.Description}\n";
+						output += $"Cooldown: {newElement.Ability.Cooldown}s\n";
 					}
 
-					llmOutputLabel.Text = llmOutput;
+
+					llmOutputLabel.Text = output;
 					llmOutputLabel.AddThemeColorOverride("font_color", Colors.LightGreen);
 
 					// Clear selections
@@ -984,5 +1008,46 @@ public partial class CombinationPanel : Control
 			}
 	}
 
-	
+	/// <summary>
+	/// Handle element flavor updates from LLM (async)
+	/// </summary>
+	private void OnFlavorUpdated(int elementId)
+	{
+		// Only update if this is the element we just created
+		if (elementId != lastCreatedElementId)
+			return;
+
+		GD.Print($"🎨 Flavor updated for element {elementId}");
+
+		// Get updated element
+		var updated = ServiceLocator.Instance.Elements.GetElement(elementId);
+		if (updated == null)
+			return;
+
+		// Update result label
+		resultLabel.Text = $"✨ {updated.Name}";
+		resultLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+
+		// Update output display
+		var output = $"✨ LLM Flavor Updated!\n\n";
+		output += $"Element: {updated.Name}\n";
+		output += $"Description: {updated.Description}\n";
+		output += $"Color: {updated.ColorHex}\n";
+		output += $"Tier: {updated.Tier}\n\n";
+
+		if (updated.Ability != null)
+		{
+			output += "Ability:\n";
+			output += $"{updated.Ability.Description}\n";
+			output += $"Cooldown: {updated.Ability.Cooldown}s\n";
+		}
+
+		llmOutputLabel.Text = output;
+		llmOutputLabel.AddThemeColorOverride("font_color", Colors.Cyan);
+
+		// Refresh lists to show updated name
+		RefreshAll();
+	}
+
+
 }
