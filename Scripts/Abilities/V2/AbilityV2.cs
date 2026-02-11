@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace Lexmancer.Abilities.V2;
 
@@ -96,7 +97,12 @@ public class AbilityV2
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
-        return JsonSerializer.Serialize(this, options);
+        var node = JsonSerializer.SerializeToNode(this, options);
+        if (node == null)
+            return "{}";
+
+        PruneEmptyArrays(node);
+        return node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
     /// <summary>
@@ -111,6 +117,54 @@ public class AbilityV2
         var ability = JsonSerializer.Deserialize<AbilityV2>(json, options);
         ability?.EnsureDescription();
         return ability;
+    }
+
+    private static void PruneEmptyArrays(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            var toRemove = new List<string>();
+            foreach (var kvp in obj)
+            {
+                if (kvp.Value == null)
+                {
+                    toRemove.Add(kvp.Key);
+                    continue;
+                }
+
+                PruneEmptyArrays(kvp.Value);
+
+                if (kvp.Value is JsonArray arr && arr.Count == 0)
+                {
+                    toRemove.Add(kvp.Key);
+                }
+                else if (kvp.Value is JsonObject childObj && childObj.Count == 0)
+                {
+                    toRemove.Add(kvp.Key);
+                }
+            }
+
+            foreach (var key in toRemove)
+                obj.Remove(key);
+        }
+        else if (node is JsonArray array)
+        {
+            for (int i = array.Count - 1; i >= 0; i--)
+            {
+                var child = array[i];
+                if (child == null)
+                {
+                    array.RemoveAt(i);
+                    continue;
+                }
+
+                PruneEmptyArrays(child);
+                if (child is JsonObject childObj && childObj.Count == 0)
+                {
+                    array.RemoveAt(i);
+                }
+            }
+        }
     }
 
     private static string BuildDescriptionFromEffects(AbilityV2 ability)

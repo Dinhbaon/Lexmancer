@@ -125,6 +125,30 @@ public static class AbilityBuilder
             }
         }
 
+        // Parse on_enter actions (area effects only)
+        if (TryGetPropertyIgnoreCase(actionElement, "on_enter", out var onEnterArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "onenter", out onEnterArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "OnEnter", out onEnterArray))
+        {
+            foreach (var enterAction in onEnterArray.EnumerateArray())
+            {
+                action.OnEnter.Add(ParseAction(enterAction));
+            }
+            GD.Print($"[Parser] Parsed {action.OnEnter.Count} on_enter action(s) for {action.Action}");
+        }
+
+        // Parse on_tick actions (area effects only)
+        if (TryGetPropertyIgnoreCase(actionElement, "on_tick", out var onTickArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "ontick", out onTickArray) ||
+            TryGetPropertyIgnoreCase(actionElement, "OnTick", out onTickArray))
+        {
+            foreach (var tickAction in onTickArray.EnumerateArray())
+            {
+                action.OnTick.Add(ParseAction(tickAction));
+            }
+            GD.Print($"[Parser] Parsed {action.OnTick.Count} on_tick action(s) for {action.Action}");
+        }
+
         // Parse on_expire actions (try multiple formats: on_expire, onExpire, OnExpire)
         if (TryGetPropertyIgnoreCase(actionElement, "on_expire", out var onExpireArray) ||
             TryGetPropertyIgnoreCase(actionElement, "onexpire", out onExpireArray) ||

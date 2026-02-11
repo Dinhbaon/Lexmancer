@@ -18,9 +18,19 @@ public class EffectAction
     public Dictionary<string, object> Args { get; set; } = new();
 
     /// <summary>
-    /// Actions to execute when this effect hits a target
+    /// Actions to execute when this effect hits a target (legacy, for non-area effects)
     /// </summary>
     public List<EffectAction> OnHit { get; set; } = new();
+
+    /// <summary>
+    /// Actions to execute when an enemy enters an area effect (area effects only)
+    /// </summary>
+    public List<EffectAction> OnEnter { get; set; } = new();
+
+    /// <summary>
+    /// Actions to execute on tick intervals for area effects (area effects only)
+    /// </summary>
+    public List<EffectAction> OnTick { get; set; } = new();
 
     /// <summary>
     /// Actions to execute when this effect expires

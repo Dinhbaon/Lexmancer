@@ -27,6 +27,7 @@ public partial class MeleeAttackNode : Area2D
 
     public Vector2 Direction { get; set; } = Vector2.Right;
     public List<EffectAction> OnHitActions { get; set; } = new();
+    public List<EffectAction> OnExpireActions { get; set; } = new();
     public EffectContext Context { get; set; }
     public Node Caster { get; set; }
 
@@ -382,6 +383,18 @@ public partial class MeleeAttackNode : Area2D
         // Destroy after active time expires
         if (isActive && timeAlive >= WindupTime + activationDelay + ActiveTime)
         {
+            // Execute on-expire actions before destroying
+            if (OnExpireActions.Count > 0 && Context != null)
+            {
+                var interpreter = EffectInterpreterPool.Get(Context.WorldNode);
+                var expireContext = Context.With(position: GlobalPosition);
+
+                foreach (var action in OnExpireActions)
+                {
+                    interpreter.Execute(action, expireContext);
+                }
+            }
+
             QueueFree();
         }
 
@@ -420,6 +433,107 @@ public partial class MeleeAttackNode : Area2D
         {
             casterNode = parent2D;
         }
+    }
+
+    private Vector2 ClampMovementTarget(Node2D mover, Vector2 desiredTarget)
+    {
+        if (mover == null)
+            return desiredTarget;
+
+        var from = mover.GlobalPosition;
+        var motion = desiredTarget - from;
+        if (motion.Length() <= 0.001f)
+            return desiredTarget;
+
+        var space = mover.GetWorld2D()?.DirectSpaceState;
+        if (space == null)
+            return desiredTarget;
+
+        var exclude = new Godot.Collections.Array<Rid>();
+        uint mask = uint.MaxValue;
+        if (mover is CollisionObject2D collisionObject)
+        {
+            exclude.Add(collisionObject.GetRid());
+            mask = collisionObject.CollisionMask;
+            if (mask == 0)
+                mask = uint.MaxValue;
+        }
+
+        var direction = motion.Normalized();
+        float radius = GetCasterCollisionRadius(mover);
+
+        for (int i = 0; i < 4; i++)
+        {
+            var query = PhysicsRayQueryParameters2D.Create(from, desiredTarget);
+            query.Exclude = exclude;
+            query.CollisionMask = mask;
+            query.HitFromInside = true;
+
+            var hit = space.IntersectRay(query);
+            if (hit.Count == 0)
+                return desiredTarget;
+
+            Node collider = null;
+            if (hit.TryGetValue("collider", out var colliderVariant))
+            {
+                collider = colliderVariant.AsGodotObject() as Node;
+            }
+            if (!IsMovementBlocker(collider))
+            {
+                if (collider is CollisionObject2D hitCollision)
+                    exclude.Add(hitCollision.GetRid());
+                else
+                    return desiredTarget;
+
+                continue;
+            }
+
+            var hitPos = hit.TryGetValue("position", out var posVariant)
+                ? posVariant.AsVector2()
+                : desiredTarget;
+            var safePos = hitPos - direction * radius;
+            if ((safePos - from).Dot(direction) <= 0f)
+                return from;
+
+            return safePos;
+        }
+
+        return desiredTarget;
+    }
+
+    private static bool IsMovementBlocker(Node collider)
+    {
+        if (collider == null)
+            return false;
+
+        if (collider.IsInGroup("enemies") || collider.IsInGroup("player"))
+            return false;
+
+        return true;
+    }
+
+    private static float GetCasterCollisionRadius(Node2D mover)
+    {
+        if (mover is not CollisionObject2D collisionObject)
+            return 8f;
+
+        foreach (Node child in collisionObject.GetChildren())
+        {
+            if (child is not CollisionShape2D shapeNode || shapeNode.Shape == null)
+                continue;
+
+            switch (shapeNode.Shape)
+            {
+                case CircleShape2D circle:
+                    return Mathf.Max(2f, circle.Radius);
+                case RectangleShape2D rect:
+                    return Mathf.Max(2f, Mathf.Max(rect.Size.X, rect.Size.Y) * 0.5f);
+                case CapsuleShape2D capsule:
+                    return Mathf.Max(2f, capsule.Radius);
+            }
+        }
+
+        return 8f;
     }
 
     private void TryStartMovement()
@@ -485,6 +599,8 @@ public partial class MeleeAttackNode : Area2D
             float travel = Mathf.Min(MoveDistance * 64f, maxTravel);
             target = casterNode.GlobalPosition + moveDir * travel;
         }
+
+        target = ClampMovementTarget(casterNode, target);
 
         // Store dash positions for line hitbox
         if (isDash)

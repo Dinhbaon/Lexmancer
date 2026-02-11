@@ -74,7 +74,7 @@ public class EffectInterpreter
                 break;
 
             case "spawn_area":
-                SpawnArea(action.Args, context, action.OnHit, action.OnExpire);
+                SpawnArea(action.Args, context, action.OnEnter, action.OnTick, action.OnHit, action.OnExpire);
                 break;
 
             case "spawn_beam":
@@ -82,7 +82,7 @@ public class EffectInterpreter
                 break;
 
             case "spawn_melee":
-                SpawnMelee(action.Args, context, action.OnHit);
+                SpawnMelee(action.Args, context, action.OnHit, action.OnExpire);
                 break;
 
             case "damage":
@@ -185,7 +185,7 @@ public class EffectInterpreter
         }
     }
 
-    private void SpawnArea(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onHit, List<EffectAction> onExpire)
+    private void SpawnArea(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onEnter, List<EffectAction> onTick, List<EffectAction> onHit, List<EffectAction> onExpire)
     {
         float radius = GetArg(args, "radius", 100f);
         float duration = GetArg(args, "duration", 2f);
@@ -220,7 +220,9 @@ public class EffectInterpreter
         areaNode.Duration = duration;
         areaNode.LingeringDamage = tickDamage;
         areaNode.GrowthTime = growthTime;
-        areaNode.OnHitActions = onHit ?? new();
+        // For backward compatibility: onHit becomes onEnter if no specific onEnter provided
+        areaNode.OnEnterActions = (onEnter?.Count > 0 ? onEnter : onHit) ?? new();
+        areaNode.OnTickActions = onTick ?? new();
         areaNode.OnExpireActions = onExpire ?? new();
         areaNode.Context = ctx;
 
@@ -270,7 +272,7 @@ public class EffectInterpreter
         GD.Print($"Spawned beam: length={length}, width={width}, duration={duration}{travelInfo}");
     }
 
-    private void SpawnMelee(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onHit)
+    private void SpawnMelee(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> onHit, List<EffectAction> onExpire)
     {
         string shape = GetArg(args, "shape", "arc");
         float range = GetArg(args, "range", 1.5f);
@@ -313,6 +315,7 @@ public class EffectInterpreter
         melee.MoveDistance = moveDistance;
         melee.MoveDuration = moveDuration;
         melee.OnHitActions = onHit;
+        melee.OnExpireActions = onExpire ?? new();
         melee.Context = ctx;
         melee.Caster = ctx.Caster;
 
@@ -510,9 +513,15 @@ public class EffectInterpreter
         }
 
         int amount = GetArg(args, "amount", 20);
-        amount = Math.Clamp(amount, 10, 50);
+        amount = Math.Clamp(amount, 5, 50);
 
-        var healTarget = ctx.Target ?? ctx.Caster;
+        // Check if heal should target caster or hit target
+        string healTargetType = GetArg(args, "target", "caster");
+
+        Node healTarget = healTargetType.ToLower() == "target"
+            ? (ctx.Target ?? ctx.Caster)
+            : ctx.Caster;
+
         if (!IsHealAllowed(ctx.Caster, healTarget))
         {
             var casterName = ctx.Caster?.Name ?? "null";
@@ -523,6 +532,7 @@ public class EffectInterpreter
 
         // Apply healing
         ServiceLocator.Instance.Combat.ApplyHealing(healTarget, amount);
+        GD.Print($"Healed {healTarget.Name} for {amount} HP (target type: {healTargetType})");
     }
 
     private void RepeatAction(Dictionary<string, object> args, EffectContext ctx, List<EffectAction> actions)

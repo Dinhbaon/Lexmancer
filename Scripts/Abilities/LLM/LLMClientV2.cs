@@ -144,6 +144,235 @@ public class LLMClientV2
         }
     }
 
+    /// <summary>
+    /// Generate flavor text only (name, descriptions, color) for a procedurally-generated ability.
+    /// Much faster than full generation since mechanics are already determined.
+    /// </summary>
+    public async Task<FlavorResponse> GenerateFlavorTextAsync(
+        string element1Name,
+        string element2Name,
+        string abilityMechanics)
+    {
+        string jsonResponse = null;
+        try
+        {
+            var prompt = BuildFlavorPrompt(element1Name, element2Name, abilityMechanics);
+            GD.Print("LLM flavor prompt:");
+            GD.Print(prompt);
+            // Grammar path for future enhancement: "Assets/LLM/flavor_grammar.gbnf"
+
+            if (CanUseDirect())
+            {
+                GD.Print($"Generating flavor via LLamaSharp: {element1Name} + {element2Name}");
+                jsonResponse = await ModelManager.Instance.InferAsync(prompt, LlmGrammarKind.Flavor, CancellationToken.None);
+            }
+            else
+            {
+                GD.Print($"Sending flavor request to LLM (HTTP fallback): {element1Name} + {element2Name}");
+
+                var request = new GenerateRequest
+                {
+                    Prompt = prompt,
+                    Format = "json",
+                    Stream = false,
+                    Model = model
+                };
+
+                var responseBuilder = new StringBuilder();
+                await foreach (var chunk in ollama.Generate(request))
+                {
+                    if (chunk?.Response != null)
+                    {
+                        responseBuilder.Append(chunk.Response);
+                    }
+                }
+                jsonResponse = responseBuilder.ToString();
+            }
+
+            GD.Print($"Received flavor response ({jsonResponse.Length} chars)");
+
+            jsonResponse = SanitizeJsonResponse(jsonResponse);
+
+            // Parse flavor response
+            var jsonElement = JsonSerializer.Deserialize<JsonElement>(jsonResponse);
+
+            var name = GetOptionalString(jsonElement, "name") ?? $"{element1Name}-{element2Name}";
+            var flavorDesc = GetOptionalString(jsonElement, "flavor_description")
+                             ?? $"A fusion of {element1Name} and {element2Name}";
+            var techDesc = GetOptionalString(jsonElement, "description") ?? abilityMechanics;
+            var color = GetOptionalString(jsonElement, "color") ?? "#808080";
+
+            // Handle cases where the model nests a JSON object inside "description"
+            if (LooksLikeJson(techDesc) && TryParseFlavorJson(techDesc, out var innerName, out var innerFlavor, out var innerDesc, out var innerColor))
+            {
+                if (!string.IsNullOrWhiteSpace(innerName))
+                    name = innerName;
+                if (!string.IsNullOrWhiteSpace(innerFlavor))
+                    flavorDesc = innerFlavor;
+                if (!string.IsNullOrWhiteSpace(innerDesc))
+                    techDesc = innerDesc;
+                if (!string.IsNullOrWhiteSpace(innerColor))
+                    color = innerColor;
+            }
+
+            // Validate color format
+            if (!color.StartsWith("#") || color.Length != 7)
+            {
+                GD.PrintErr($"Invalid color format: {color}, using gray");
+                color = "#808080";
+            }
+
+            // Truncate if too long
+            if (flavorDesc.Length > 200)
+            {
+                flavorDesc = flavorDesc.Substring(0, 197) + "...";
+            }
+            if (techDesc.Length > 300)
+            {
+                techDesc = techDesc.Substring(0, 297) + "...";
+            }
+
+            GD.Print($"✨ Generated flavor: {name}");
+            return new FlavorResponse
+            {
+                Name = name,
+                FlavorDescription = flavorDesc,
+                Description = techDesc,
+                ColorHex = color
+            };
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"Flavor generation failed: {ex.Message}");
+            if (jsonResponse != null && jsonResponse.Length > 0)
+            {
+                GD.PrintErr($"LLM Response: {(jsonResponse.Length > 200 ? jsonResponse.Substring(0, 200) + "..." : jsonResponse)}");
+            }
+
+            // Fallback to procedural
+            return new FlavorResponse
+            {
+                Name = $"{element1Name}-{element2Name}",
+                FlavorDescription = $"A fusion of {element1Name} and {element2Name}",
+                Description = abilityMechanics,
+                ColorHex = "#808080"
+            };
+        }
+    }
+
+    private static string GetOptionalString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var prop))
+            return null;
+
+        return prop.ValueKind switch
+        {
+            JsonValueKind.String => prop.GetString(),
+            JsonValueKind.Number => prop.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Object => prop.GetRawText(),
+            JsonValueKind.Array => prop.GetRawText(),
+            _ => null
+        };
+    }
+
+    private static bool LooksLikeJson(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var trimmed = text.TrimStart();
+        return trimmed.StartsWith("{") || trimmed.StartsWith("[");
+    }
+
+    private static bool TryParseFlavorJson(string json, out string name, out string flavorDesc, out string description, out string color)
+    {
+        name = null;
+        flavorDesc = null;
+        description = null;
+        color = null;
+
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        try
+        {
+            var element = JsonSerializer.Deserialize<JsonElement>(json);
+            name = GetOptionalString(element, "name");
+            flavorDesc = GetOptionalString(element, "flavor_description");
+            description = GetOptionalString(element, "description");
+            color = GetOptionalString(element, "color");
+            return !string.IsNullOrWhiteSpace(name) ||
+                   !string.IsNullOrWhiteSpace(flavorDesc) ||
+                   !string.IsNullOrWhiteSpace(description) ||
+                   !string.IsNullOrWhiteSpace(color);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private string BuildFlavorPrompt(string element1, string element2, string mechanics)
+    {
+        return $@"You are a creative fantasy game writer creating flavor text for magical elements.
+
+Two elements are combined: {element1} + {element2}
+
+The ability mechanically does: ""{mechanics}""
+
+Your task is to generate CREATIVE FLAVOR TEXT ONLY. The mechanics are already finalized - DO NOT change them!
+
+Generate two descriptions:
+1. ""flavor_description"": A SHORT (1-2 sentences) thematic, evocative description of what this element IS and FEELS like. Make it atmospheric and immersive.
+2. ""description"": A DETAILED technical description that explains the mechanics including exact numbers, ranges, effects, and how it works in combat. Be specific about damage amounts, durations, ranges, and all gameplay effects.
+
+Examples:
+
+Fire + Lightning:
+{{
+  ""name"": ""Voltaic Inferno"",
+  ""flavor_description"": ""Flames charged with crackling electrical energy that seeks out foes with deadly precision."",
+  ""description"": ""Fires 3 projectiles in a spread pattern (speed 450) that deal 23 fire damage and apply burning (3s) and shocked (3s). Chains to 3 nearby targets within 150 units and explodes in a 120 radius area dealing 10 fire damage per second for 2 seconds. Cooldown: 5.5s."",
+  ""color"": ""#FF6B35""
+}}
+
+Water + Earth:
+{{
+  ""name"": ""Mudflow Trap"",
+  ""flavor_description"": ""Heavy liquid stone that clings to enemies, weighing them down like quicksand."",
+  ""description"": ""Creates an area effect (radius 200, duration 5s, growth_time 0.8s) that deals 8 poison damage per second and applies slowed (4s) and stunned (2s) on entry. Enemies caught in the area are continuously damaged. Cooldown: 6.0s."",
+  ""color"": ""#8B7355""
+}}
+
+Shadow + Wind:
+{{
+  ""name"": ""Phantom Slash"",
+  ""flavor_description"": ""A spectral blade that cuts through both flesh and space, leaving only darkness in its wake."",
+  ""description"": ""Performs a wide arc melee attack (135°, range 2.2, movement: blink, move_distance 3.5) that deals 20 shadow damage and applies feared (2s). On expire, deals 15 shadow damage in a 120 radius area around the teleport destination. Cooldown: 7.0s."",
+  ""color"": ""#708090""
+}}
+
+NOW GENERATE your creative element for {element1} + {element2}.
+
+IMPORTANT RULES:
+- ""name"" must be 2-3 words, evocative and memorable
+- ""flavor_description"" is SHORT and thematic (atmosphere, feel, imagery)
+- ""description"" is DETAILED and technical (numbers, mechanics, specifics from the ability mechanics provided)
+- ""color"" must be a valid hex color code like #FF5500
+- Be creative with the name and flavor_description!
+- Keep the description accurate to the mechanics provided!
+
+Return ONLY valid JSON in this exact format:
+{{
+  ""name"": ""2-3 Word Name"",
+  ""flavor_description"": ""Short thematic description"",
+  ""description"": ""Detailed technical description with numbers and mechanics"",
+  ""color"": ""#HEXCOLOR""
+}}";
+    }
+
     private string BuildElementCreationPrompt(
         string element1,
         string element2,
@@ -576,4 +805,16 @@ public class ElementGenerationResponse
     public string Description { get; set; }
     public string ColorHex { get; set; }
     public AbilityV2 Ability { get; set; }
+}
+
+/// <summary>
+/// Response from LLM flavor-only generation (no mechanics)
+/// Used in hybrid procedural + LLM mode
+/// </summary>
+public class FlavorResponse
+{
+    public string Name { get; set; }
+    public string FlavorDescription { get; set; }  // Thematic/creative description
+    public string Description { get; set; }         // Technical description with stats
+    public string ColorHex { get; set; }
 }
