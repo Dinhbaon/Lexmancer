@@ -193,6 +193,7 @@ public class EffectInterpreter
         int damage = GetArg(args, "damage", 0);
         float growthTime = GetArg(args, "growth_time", 0f);
         bool spawnAtCaster = GetArg(args, "spawn_at_caster", false);
+        bool spawnAtTarget = GetArg(args, "spawn_at_target", false);
 
         // Clamp values
         radius = Math.Clamp(radius, 50f, 300f);
@@ -201,7 +202,18 @@ public class EffectInterpreter
         growthTime = Math.Clamp(growthTime, 0f, 3f);
 
         Vector2 spawnPosition = ctx.Position;
-        if (spawnAtCaster)
+        if (spawnAtTarget && ctx.Target != null)
+        {
+            if (ctx.Target is Node2D target2D)
+            {
+                spawnPosition = target2D.GlobalPosition;
+            }
+            else if (ctx.Target is IMoveable targetMoveable)
+            {
+                spawnPosition = targetMoveable.GetBody().GlobalPosition;
+            }
+        }
+        else if (spawnAtCaster)
         {
             if (ctx.Caster is Node2D caster2D)
             {
